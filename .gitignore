@@ -1,0 +1,13 @@
+node_modules/
+.serena/
+.claude/settings.local.json
+
+# flatuniverse
+__pycache__/
+*.pyc
+.venv/
+venv/
+flatuniverse/data/
+flatuniverse/runs/
+*.npy
+*.mp4
