@@ -1,0 +1,84 @@
+-- Persistent queue for the camera-upload pipeline (Android). Survives reboot/app-kill.
+-- See DESIGN.md §8.5. Upload is always a copy; the local file is never deleted.
+CREATE TABLE UploadQueue (
+    id            TEXT NOT NULL PRIMARY KEY,
+    localPath     TEXT NOT NULL,              -- file:// or content:// URI of the DCIM file
+    sha256        TEXT,                       -- computed before upload, for dedupe
+    sizeBytes     INTEGER NOT NULL,
+    targetSourceId TEXT NOT NULL,             -- which cloud account to upload to
+    targetRemotePath TEXT,                    -- destination folder in that cloud
+    state         TEXT NOT NULL DEFAULT 'QUEUED', -- QUEUED, RUNNING, DONE, FAILED, SKIPPED_DUPLICATE
+    attempts      INTEGER NOT NULL DEFAULT 0,
+    lastError     TEXT,
+    queuedAt      INTEGER NOT NULL,
+    finishedAt    INTEGER,
+    FOREIGN KEY(targetSourceId) REFERENCES Source(id) ON DELETE CASCADE
+);
+
+-- Guarantees the same file never uploads twice to the same cloud.
+CREATE UNIQUE INDEX idx_upload_sha ON UploadQueue(sha256, targetSourceId);
+
+selectPending:
+SELECT * FROM UploadQueue
+WHERE state IN ('QUEUED', 'RUNNING')
+ORDER BY queuedAt ASC;
+
+selectByState:
+SELECT * FROM UploadQueue WHERE state = ? ORDER BY queuedAt ASC;
+
+selectById:
+SELECT * FROM UploadQueue WHERE id = ?;
+
+countByState:
+SELECT COUNT(*) FROM UploadQueue WHERE state = ?;
+
+enqueue:
+INSERT OR IGNORE INTO UploadQueue(
+    id, localPath, sha256, sizeBytes, targetSourceId, targetRemotePath,
+    state, attempts, lastError, queuedAt, finishedAt
+) VALUES (?, ?, ?, ?, ?, ?, 'QUEUED', 0, NULL, ?, NULL);
+
+markRunning:
+UPDATE UploadQueue SET state = 'RUNNING' WHERE id = ?;
+
+markDone:
+UPDATE UploadQueue SET state = 'DONE', finishedAt = ? WHERE id = ?;
+
+markFailed:
+UPDATE UploadQueue SET state = 'FAILED', attempts = attempts + 1, lastError = ?, finishedAt = ? WHERE id = ?;
+
+markRetry:
+UPDATE UploadQueue SET state = 'QUEUED', attempts = attempts + 1, lastError = ? WHERE id = ?;
+
+-- Local items that have never been offered to this cloud.
+--
+-- The anti-join is on localPath because that is the only link back to the file:
+-- UploadQueue is keyed by content hash, which is not known until a file has been
+-- read. Newest first, so a fresh photo uploads before an old backlog drains.
+selectUnqueuedLocalItems:
+SELECT m.*
+FROM MediaItem m
+WHERE m.sourceId = ?
+  AND NOT EXISTS (
+      SELECT 1 FROM UploadQueue q
+      WHERE q.targetSourceId = ?
+        AND (q.localPath = m.remoteThumbUrl OR q.localPath = m.remoteId)
+  )
+ORDER BY m.dateTaken DESC
+LIMIT ?;
+
+markSkippedDuplicate:
+UPDATE UploadQueue SET state = 'SKIPPED_DUPLICATE', finishedAt = ? WHERE id = ?;
+
+-- Has this exact content already reached this cloud? Guards against re-uploading
+-- the same photo after a reinstall or when it appears under a second path.
+selectDoneByHash:
+SELECT * FROM UploadQueue
+WHERE sha256 = ? AND targetSourceId = ? AND state IN ('DONE', 'SKIPPED_DUPLICATE')
+LIMIT 1;
+
+delete:
+DELETE FROM UploadQueue WHERE id = ?;
+
+clearDone:
+DELETE FROM UploadQueue WHERE state = 'DONE';

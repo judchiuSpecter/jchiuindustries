@@ -1,0 +1,111 @@
+-- One row per photo/video known to the app, across every source.
+-- The same physical photo present in two sources (e.g. local + Drive) is two rows,
+-- linked by contentHash for de-duplication in the timeline.
+CREATE TABLE MediaItem (
+    id            TEXT NOT NULL PRIMARY KEY,   -- "<sourceId>:<remoteOrLocalId>"
+    sourceId      TEXT NOT NULL,
+    remoteId      TEXT NOT NULL,               -- Drive fileId / Mega node handle / local MediaStore id / path
+    displayName   TEXT NOT NULL,
+    mimeType      TEXT NOT NULL,               -- image/jpeg, video/mp4, ...
+    isVideo       INTEGER NOT NULL DEFAULT 0,
+    sizeBytes     INTEGER NOT NULL DEFAULT 0,
+    width         INTEGER,
+    height        INTEGER,
+    -- Sorting key: EXIF date-taken when known, else file mtime. Epoch millis, UTC.
+    dateTaken     INTEGER NOT NULL,
+    contentHash   TEXT,                        -- SHA-256 of the original, when computed
+    -- Cache / sync bookkeeping.
+    thumbCachePath   TEXT,                      -- local path to cached thumbnail, null if not cached
+    originalCachePath TEXT,                     -- local path to cached original, null if not downloaded
+    syncState     TEXT NOT NULL DEFAULT 'INDEXED', -- INDEXED, THUMB_CACHED, ORIGINAL_CACHED
+    -- For local items this is the on-device URI; for remote items a hint for refetch.
+    remoteThumbUrl TEXT,
+    indexedAt     INTEGER NOT NULL,
+    FOREIGN KEY(sourceId) REFERENCES Source(id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_media_dateTaken ON MediaItem(dateTaken DESC);
+CREATE INDEX idx_media_source ON MediaItem(sourceId);
+CREATE INDEX idx_media_hash ON MediaItem(contentHash);
+
+-- Timeline: newest first, across all enabled sources. Dedup by hash is done in code
+-- (keep the local copy over the remote one when hashes match).
+timelinePage:
+SELECT MediaItem.*
+FROM MediaItem
+JOIN Source ON Source.id = MediaItem.sourceId
+WHERE Source.enabled = 1
+ORDER BY dateTaken DESC
+LIMIT :limit OFFSET :offset;
+
+selectById:
+SELECT * FROM MediaItem WHERE id = ?;
+
+selectBySource:
+SELECT * FROM MediaItem WHERE sourceId = ? ORDER BY dateTaken DESC;
+
+selectByHash:
+SELECT * FROM MediaItem WHERE contentHash = ?;
+
+countBySource:
+SELECT COUNT(*) FROM MediaItem WHERE sourceId = ?;
+
+-- Total items visible in the timeline (enabled sources only).
+countTimeline:
+SELECT COUNT(*)
+FROM MediaItem
+JOIN Source ON Source.id = MediaItem.sourceId
+WHERE Source.enabled = 1;
+
+upsert:
+INSERT INTO MediaItem(
+    id, sourceId, remoteId, displayName, mimeType, isVideo, sizeBytes,
+    width, height, dateTaken, contentHash, thumbCachePath, originalCachePath,
+    syncState, remoteThumbUrl, indexedAt
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+    displayName = excluded.displayName,
+    mimeType = excluded.mimeType,
+    isVideo = excluded.isVideo,
+    sizeBytes = excluded.sizeBytes,
+    width = excluded.width,
+    height = excluded.height,
+    dateTaken = excluded.dateTaken,
+    contentHash = coalesce(excluded.contentHash, MediaItem.contentHash),
+    remoteThumbUrl = excluded.remoteThumbUrl,
+    indexedAt = excluded.indexedAt;
+
+-- Items still needing a thumbnail, newest first so the visible top of the
+-- timeline sharpens before older photos.
+selectMissingThumbnails:
+SELECT MediaItem.*
+FROM MediaItem
+JOIN Source ON Source.id = MediaItem.sourceId
+WHERE Source.enabled = 1 AND MediaItem.thumbCachePath IS NULL
+ORDER BY MediaItem.dateTaken DESC
+LIMIT :limit;
+
+countMissingThumbnails:
+SELECT COUNT(*)
+FROM MediaItem
+JOIN Source ON Source.id = MediaItem.sourceId
+WHERE Source.enabled = 1 AND MediaItem.thumbCachePath IS NULL;
+
+setThumbCache:
+UPDATE MediaItem SET thumbCachePath = ?, syncState = 'THUMB_CACHED' WHERE id = ?;
+
+-- Drop thumbnail links whose cache files were deleted externally.
+clearThumbCache:
+UPDATE MediaItem SET thumbCachePath = NULL, syncState = 'INDEXED' WHERE id = ?;
+
+setOriginalCache:
+UPDATE MediaItem SET originalCachePath = ?, syncState = 'ORIGINAL_CACHED' WHERE id = ?;
+
+setContentHash:
+UPDATE MediaItem SET contentHash = ? WHERE id = ?;
+
+deleteBySource:
+DELETE FROM MediaItem WHERE sourceId = ?;
+
+delete:
+DELETE FROM MediaItem WHERE id = ?;

@@ -1,0 +1,26 @@
+.gradle/
+build/
+*/build/
+local.properties
+.idea/
+*.iml
+.DS_Store
+captures/
+.kotlin/
+
+# --- Credentials: never commit. This repo is public. ---
+# Google's downloaded OAuth client files.
+client_secret*.json
+# PhotoHub's own OAuth config. The client id is not a password, but the
+# desktop-client variant carries a client_secret, so keep the whole file out.
+google-oauth.json
+# Signing keys. A leaked upload key cannot be rotated for an installed app.
+*.keystore
+*.jks
+*.p12
+*.pem
+keystore.properties
+# Env files and token caches.
+.env
+.env.*
+*.tokens.json

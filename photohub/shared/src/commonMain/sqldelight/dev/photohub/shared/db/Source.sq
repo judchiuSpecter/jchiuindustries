@@ -1,0 +1,46 @@
+-- A configured photo source: local device, a cloud account, Takeout, or NAS archive.
+CREATE TABLE Source (
+    id            TEXT NOT NULL PRIMARY KEY,
+    type          TEXT NOT NULL,           -- LOCAL, GOOGLE_DRIVE, MEGA, ONEDRIVE, TAKEOUT, NAS_ARCHIVE
+    displayName   TEXT NOT NULL,
+    enabled       INTEGER NOT NULL DEFAULT 1,
+    isUploadTarget INTEGER NOT NULL DEFAULT 0, -- exactly one source may be the camera-upload target
+    -- Opaque, source-specific config (JSON). Credentials are stored separately/encrypted.
+    configJson    TEXT NOT NULL DEFAULT '{}',
+    lastSyncedAt  INTEGER,                  -- epoch millis of last successful sync, null if never
+    sortOrder     INTEGER NOT NULL DEFAULT 0
+);
+
+selectAll:
+SELECT * FROM Source ORDER BY sortOrder, displayName;
+
+selectEnabled:
+SELECT * FROM Source WHERE enabled = 1 ORDER BY sortOrder, displayName;
+
+selectById:
+SELECT * FROM Source WHERE id = ?;
+
+selectUploadTarget:
+SELECT * FROM Source WHERE isUploadTarget = 1 LIMIT 1;
+
+upsert:
+INSERT INTO Source(id, type, displayName, enabled, isUploadTarget, configJson, lastSyncedAt, sortOrder)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+    type = excluded.type,
+    displayName = excluded.displayName,
+    enabled = excluded.enabled,
+    isUploadTarget = excluded.isUploadTarget,
+    configJson = excluded.configJson,
+    lastSyncedAt = excluded.lastSyncedAt,
+    sortOrder = excluded.sortOrder;
+
+-- Only one upload target at a time: clear the flag everywhere, then the caller sets it on one.
+clearAllUploadTargets:
+UPDATE Source SET isUploadTarget = 0;
+
+setLastSynced:
+UPDATE Source SET lastSyncedAt = ? WHERE id = ?;
+
+delete:
+DELETE FROM Source WHERE id = ?;
