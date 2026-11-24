@@ -5,13 +5,18 @@ import dev.photohub.shared.auth.CredentialStore
 import dev.photohub.shared.auth.DriveAccountFactory
 import dev.photohub.shared.auth.GoogleOAuthClient
 import dev.photohub.shared.auth.GoogleOAuthConfig
+import dev.photohub.shared.auth.MegaAccounts
 import dev.photohub.shared.auth.RedirectCapture
 import dev.photohub.shared.auth.RedirectResult
 import dev.photohub.shared.data.AccountsController
 import dev.photohub.shared.data.AccountsController.LinkState
 import dev.photohub.shared.data.MediaRepository
+import dev.photohub.shared.data.UploadTarget
 import dev.photohub.shared.db.PhotoHubDatabase
+import dev.photohub.shared.model.SourceConfig
 import dev.photohub.shared.model.SourceType
+import dev.photohub.shared.model.StorageQuota
+import dev.photohub.shared.source.MediaSource
 import dev.photohub.shared.source.drive.DriveSourceConfig
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
@@ -52,10 +57,43 @@ class AccountsControllerTest {
         }
     }
 
+    /** Stands in for a real MEGA login; the tests only care about state. */
+    private class FakeMegaAccounts : MegaAccounts {
+        val linked = mutableSetOf<String>()
+        var failLink = false
+
+        override fun isLinked(sourceId: String) = sourceId in linked
+
+        override suspend fun link(
+            sourceId: String,
+            email: String,
+            password: String,
+            mfa: String?,
+        ): Result<String> {
+            if (failLink) return Result.failure(IllegalStateException("Invalid credentials"))
+            linked += sourceId
+            return Result.success(email)
+        }
+
+        override suspend fun unlink(sourceId: String) { linked -= sourceId }
+
+        override suspend fun quota(sourceId: String) = StorageQuota(
+            limitBytes = 50_000_000_000L,
+            usedBytes = 12_000_000_000L,
+        )
+
+        override suspend fun sourceFor(config: SourceConfig): MediaSource =
+            error("Not used by these state tests")
+
+        override suspend fun targetFor(config: SourceConfig): UploadTarget =
+            error("Not used by these state tests")
+    }
+
     private data class Harness(
         val controller: AccountsController,
         val repository: MediaRepository,
         val store: MemStore,
+        val megas: FakeMegaAccounts,
     )
 
     private fun repo(): MediaRepository {
@@ -106,13 +144,15 @@ class AccountsControllerTest {
             generateState = { "fixed" },
             launchBrowser = { true },
         )
+        val megas = FakeMegaAccounts()
         val controller = AccountsController(
             repository = repository,
             drives = factory,
+            megas = megas,
             oauthConfig = config,
             generateSourceId = generateSourceId,
         )
-        return Harness(controller, repository, store)
+        return Harness(controller, repository, store, megas)
     }
 
     private fun Harness.driveSources() =
@@ -279,6 +319,66 @@ class AccountsControllerTest {
         h.controller.refreshQuotas()
         assertEquals(4_230_000_000L, h.account("google_drive_test").quota!!.usedBytes)
         assertTrue(!h.controller.state.value.quotaLoading)
+    }
+
+    @Test
+    fun linkingMegaCreatesItsOwnSourceAndUploadTarget() = runTest {
+        val h = build()
+        h.controller.linkMega("jud@mega.example", "secret")
+
+        val source = h.repository.allSources().single { it.type == SourceType.MEGA }
+        assertTrue(source.id.startsWith("mega_"))
+        assertTrue(source.isUploadTarget)
+        assertEquals(LinkState.LINKED, h.account(source.id).state)
+        assertTrue(h.account(source.id).canUpload)
+        assertTrue(h.megas.isLinked(source.id))
+        assertTrue(h.controller.state.value.message!!.contains("MEGA"))
+    }
+
+    @Test
+    fun megaCanBeSwitchedToAsUploadTargetAndDisconnected() = runTest {
+        val h = build()
+        h.controller.linkDrive()
+        val driveId = h.driveSources().single().id
+        h.controller.linkMega("jud@mega.example", "secret")
+        val megaId = h.repository.allSources().single { it.type == SourceType.MEGA }.id
+
+        // The first cloud keeps the target when MEGA is added later.
+        assertEquals(driveId, h.repository.uploadTarget()?.id)
+        h.controller.setUploadTarget(megaId)
+        assertEquals(megaId, h.repository.uploadTarget()?.id)
+
+        h.controller.unlinkSource(megaId)
+        assertEquals(LinkState.NOT_LINKED, h.account(megaId).state)
+        assertTrue(!h.megas.isLinked(megaId))
+        assertNull(h.repository.uploadTarget())
+        // Indexed rows stay put; only the connection was removed.
+        assertTrue(h.repository.sourceById(megaId) != null)
+    }
+
+    @Test
+    fun megaQuotaIsFetchedOnDemand() = runTest {
+        val h = build()
+        h.controller.linkMega("jud@mega.example", "secret")
+        val id = h.repository.allSources().single { it.type == SourceType.MEGA }.id
+        assertNull(h.account(id).quota)
+
+        h.controller.refreshQuotas()
+        assertEquals(12_000_000_000L, h.account(id).quota!!.usedBytes)
+        assertEquals(50_000_000_000L, h.account(id).quota!!.limitBytes)
+    }
+
+    @Test
+    fun failedMegaLinkReportsAnErrorWithoutASourceRow() = runTest {
+        val h = build()
+        h.megas.failLink = true
+
+        h.controller.linkMega("jud@mega.example", "wrong")
+
+        assertTrue(h.repository.allSources().none { it.type == SourceType.MEGA })
+        val card = h.controller.state.value.sources.single { it.type == SourceType.MEGA }
+        assertTrue(card.error!!.contains("Invalid credentials"))
+        assertEquals(LinkState.NOT_LINKED, card.state)
     }
 
     @Test

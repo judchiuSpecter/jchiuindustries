@@ -3,6 +3,8 @@ package dev.photohub.shared.di
 import dev.photohub.shared.auth.DriveAccountFactory
 import dev.photohub.shared.auth.GoogleOAuthClient
 import dev.photohub.shared.auth.GoogleOAuthConfig
+import dev.photohub.shared.auth.MegaAccountFactory
+import dev.photohub.shared.auth.MegaAccounts
 import dev.photohub.shared.auth.OAuthConfigLoader
 import dev.photohub.shared.data.AccountsController
 import dev.photohub.shared.data.CameraUploadScanner
@@ -30,7 +32,7 @@ val sharedModule = module {
     single { MediaIndexer(get()) }
     single { SettingsStore() }
     single { ThumbnailStore(get()) }
-    single { SourceRegistry(get()) }
+    single { SourceRegistry(get(), get()) }
     single { TimelineController(get(), get(), get(), get()) }
     single { BackgroundScheduler() }
 
@@ -60,14 +62,17 @@ val sharedModule = module {
             now = { nowEpochMs() },
         )
     }
+    // MEGA: one cached client graph per connected account, like Drive.
+    single<MegaAccounts> { MegaAccountFactory(credentials = get()) }
+
     single { UploadManager(get(), now = { nowEpochMs() }) }
     single { FullscreenImageController(get(), get()) }
-    single { AccountsController(get(), get(), get(), get()) }
+    single { AccountsController(get(), get(), get(), get(), get()) }
     single { CameraUploadScanner(get(), get(), get()) }
 
     // Resolves the *current* upload target on every use: the user can switch
     // clouds in Settings without restarting the app.
-    single { CurrentUploadTarget(get(), get()) }
+    single { CurrentUploadTarget(get(), get(), get()) }
     single<UploadTarget> { get<CurrentUploadTarget>() }
 }
 

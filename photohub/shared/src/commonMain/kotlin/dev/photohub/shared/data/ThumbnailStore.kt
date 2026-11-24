@@ -5,6 +5,8 @@ import dev.photohub.shared.platform.fileSystem
 import dev.photohub.shared.platform.renderThumbnail
 import dev.photohub.shared.platform.thumbnailConcurrency
 import dev.photohub.shared.db.PhotoHubDatabase
+import dev.photohub.shared.model.RemoteMedia
+import dev.photohub.shared.source.MediaSource
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -22,6 +24,11 @@ import okio.Path
  * missing files are regenerated on the next pass.
  */
 class ThumbnailStore(private val db: PhotoHubDatabase) {
+
+    companion object {
+        /** How many downloaded thumbnails to build per refresh. */
+        const val REMOTE_THUMB_LIMIT = 120
+    }
 
     /** Longest edge of a generated thumbnail, in pixels. */
     private val maxEdge = 384
@@ -99,6 +106,52 @@ class ThumbnailStore(private val db: PhotoHubDatabase) {
         }
 
         return Stats(generated = generated, reused = reused, failed = failed)
+    }
+
+    /**
+     * Builds thumbnails that require bytes from a remote source.
+     *
+     * Drive and local media already have an image reference, so
+     * [generateMissing] handles them. A source like MEGA has no thumbnail URL;
+     * its [MediaSource.fetchThumbnail] downloads and renders one instead. The
+     * per-sync cap keeps a large first run from saturating the connection —
+     * the next refresh picks up where this one stopped because successful rows
+     * no longer appear in the query.
+     */
+    suspend fun fetchRemote(
+        source: MediaSource,
+        limit: Int = REMOTE_THUMB_LIMIT,
+        onProgress: (Int) -> Unit = {},
+    ): Stats {
+        val pending = db.mediaItemQueries
+            .selectMissingThumbnailsForSource(source.config.id, limit.toLong())
+            .executeAsList()
+        if (pending.isEmpty()) return Stats(0, 0, 0)
+
+        var generated = 0
+        var failed = 0
+        for (row in pending) {
+            val target = thumbDir / "${row.id.thumbFileName()}"
+            val remote = RemoteMedia(
+                remoteId = row.remoteId,
+                displayName = row.displayName,
+                mimeType = row.mimeType,
+                isVideo = row.isVideo == 1L,
+                sizeBytes = row.sizeBytes,
+                dateTakenEpochMs = row.dateTaken,
+                thumbnailUrl = row.remoteThumbUrl,
+                contentHash = row.contentHash,
+            )
+            val path = source.fetchThumbnail(remote, target).getOrNull()
+            if (path != null) {
+                db.mediaItemQueries.setThumbCache(path.toString(), row.id)
+                generated++
+            } else {
+                failed++
+            }
+            onProgress(generated + failed)
+        }
+        return Stats(generated = generated, reused = 0, failed = failed)
     }
 
     /**

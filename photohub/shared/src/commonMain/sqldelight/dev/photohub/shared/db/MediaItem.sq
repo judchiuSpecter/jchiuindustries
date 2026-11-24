@@ -85,6 +85,16 @@ WHERE Source.enabled = 1 AND MediaItem.thumbCachePath IS NULL
 ORDER BY MediaItem.dateTaken DESC
 LIMIT :limit;
 
+-- Same as selectMissingThumbnails, but scoped to one cloud source so a
+-- provider that must download bytes to build a thumbnail can be throttled
+-- independently of the (instant) device source.
+selectMissingThumbnailsForSource:
+SELECT MediaItem.*
+FROM MediaItem
+WHERE MediaItem.sourceId = :sourceId AND MediaItem.thumbCachePath IS NULL
+ORDER BY MediaItem.dateTaken DESC
+LIMIT :limit;
+
 countMissingThumbnails:
 SELECT COUNT(*)
 FROM MediaItem

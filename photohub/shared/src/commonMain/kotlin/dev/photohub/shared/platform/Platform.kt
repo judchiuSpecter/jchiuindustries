@@ -88,6 +88,22 @@ expect fun fileSize(ref: String): Long?
  */
 expect suspend fun readChunk(ref: String, offset: Long, length: Int): ByteArray?
 
+/** A local file prepared for APIs that need a real filesystem path. */
+data class MaterializedFile(
+    val path: Path,
+    /** True when this is a temporary copy the caller must delete after use. */
+    val isTemporary: Boolean,
+)
+
+/**
+ * Resolves [ref] — a plain path on desktop, possibly a `content://` URI on
+ * Android — to a real file some SDK can open.
+ *
+ * MEGA's upload API reads from a filesystem path, unlike Drive's chunk seam, so
+ * content URIs have to be copied into the app's private cache first.
+ */
+expect suspend fun materializeLocalFile(ref: String): MaterializedFile
+
 /**
  * File name to use for [ref] in the cloud.
  *

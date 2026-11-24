@@ -2,12 +2,14 @@ package dev.photohub.shared.data
 
 import dev.photohub.shared.auth.DriveAccountFactory
 import dev.photohub.shared.auth.DriveLinkCoordinator
+import dev.photohub.shared.auth.MegaAccounts
 import dev.photohub.shared.auth.GoogleOAuthConfig
 import dev.photohub.shared.auth.OAuthConfigLoader
 import dev.photohub.shared.model.SourceType
 import dev.photohub.shared.model.StorageQuota
 import dev.photohub.shared.platform.BackgroundScheduler
 import dev.photohub.shared.source.drive.DriveSourceConfig
+import dev.photohub.shared.source.mega.MegaSourceConfig
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -27,6 +29,7 @@ import kotlinx.serialization.json.Json
 class AccountsController(
     private val repository: MediaRepository,
     private val drives: DriveAccountFactory,
+    private val megas: MegaAccounts,
     private val oauthConfig: GoogleOAuthConfig,
     private val scheduler: BackgroundScheduler = BackgroundScheduler(),
     /** Overridable so tests can use predictable ids. */
@@ -68,6 +71,8 @@ class AccountsController(
     /** Transient UI detail kept outside [State] so a storage refresh cannot lose it. */
     private var linkingId: String? = null
     private val errors = mutableMapOf<String, String>()
+    /** Provider for errors that occurred before a Source row existed. */
+    private val errorTypes = mutableMapOf<String, SourceType>()
     /** Last known quota per source; kept so an offline visit still shows a value. */
     private val quotas = mutableMapOf<String, StorageQuota>()
     private var quotaLoading = false
@@ -90,23 +95,33 @@ class AccountsController(
      * screen when a later fetch fails.
      */
     suspend fun refreshQuotas() {
-        val ids = repository.allSources()
-            .filter { it.type == SourceType.GOOGLE_DRIVE && it.enabled && drives.isLinked(it.id) }
-            .map { it.id }
-        if (ids.isEmpty()) return
+        val connected = repository.allSources().filter { source ->
+            source.enabled && when (source.type) {
+                SourceType.GOOGLE_DRIVE -> drives.isLinked(source.id)
+                SourceType.MEGA -> megas.isLinked(source.id)
+                else -> false
+            }
+        }
+        if (connected.isEmpty()) return
 
         quotaLoading = true
         publish()
-        for (id in ids) {
-            // `about` is already a Result — no need for a second runCatching.
-            val quota = drives.forSource(id).api.about().getOrNull()?.storageQuota
-            if (quota != null) {
-                quotas[id] = StorageQuota(
-                    limitBytes = quota.limit?.toLongOrNull(),
-                    usedBytes = quota.usage?.toLongOrNull(),
-                    usedInDriveBytes = quota.usageInDrive?.toLongOrNull(),
-                )
+        for (source in connected) {
+            val quota = when (source.type) {
+                SourceType.MEGA -> megas.quota(source.id)
+                else -> {
+                    // `about` is already a Result — no need for a second runCatching.
+                    val details = drives.forSource(source.id).api.about().getOrNull()?.storageQuota
+                    details?.let {
+                        StorageQuota(
+                            limitBytes = it.limit?.toLongOrNull(),
+                            usedBytes = it.usage?.toLongOrNull(),
+                            usedInDriveBytes = it.usageInDrive?.toLongOrNull(),
+                        )
+                    }
+                }
             }
+            if (quota != null) quotas[source.id] = quota
         }
         quotaLoading = false
         publish()
@@ -137,8 +152,9 @@ class AccountsController(
      */
     suspend fun linkDrive(sourceId: String? = null) {
         if (!oauthConfig.isConfigured) {
-            errors[sourceId ?: DriveSourceConfig.SOURCE_ID] =
-                "No Google OAuth client ID found. See README → Connecting Google Drive."
+            val id = sourceId ?: DriveSourceConfig.SOURCE_ID
+            errors[id] = "No Google OAuth client ID found. See README → Connecting Google Drive."
+            errorTypes[id] = SourceType.GOOGLE_DRIVE
             publish()
             return
         }
@@ -146,6 +162,7 @@ class AccountsController(
         val id = sourceId ?: generateSourceId()
         linkingId = id
         errors.remove(id)
+        errorTypes[id] = SourceType.GOOGLE_DRIVE
         publish()
 
         val account = drives.forSource(id)
@@ -195,15 +212,73 @@ class AccountsController(
     }
 
     /**
+     * Connects a MEGA account with email/password (and an optional 2FA code).
+     *
+     * Only the resumable session is stored; the password is never persisted.
+     * On success a new source instance is created and, if no cloud owns camera
+     * uploads yet, it becomes the upload target.
+     */
+    suspend fun linkMega(
+        email: String,
+        password: String,
+        mfa: String? = null,
+        sourceId: String? = null,
+    ) {
+        val id = sourceId ?: ("mega_" + Random.nextBytes(4).joinToString("") { byte ->
+            (byte.toInt() and 0xff).toString(16).padStart(2, '0')
+        })
+        linkingId = id
+        errors.remove(id)
+        errorTypes[id] = SourceType.MEGA
+        publish()
+
+        val outcome = megas.link(id, email, password, mfa)
+        val label = outcome.getOrNull()?.ifBlank { "MEGA" }
+        if (label != null) {
+            linkingId = null
+            val displayName = "MEGA ($label)"
+
+            val existing = repository.sourceById(id)
+            val previousConfig = existing?.configJson?.let { json ->
+                runCatching { Json.decodeFromString<MegaSourceConfig>(json) }.getOrNull()
+            }
+            val config = (previousConfig ?: MegaSourceConfig()).copy(accountEmail = label)
+
+            val currentTargetId = repository.uploadTarget()?.id
+            val makeTarget = existing?.isUploadTarget == true ||
+                currentTargetId == null ||
+                currentTargetId == id
+            repository.upsertCloudSource(
+                id = id,
+                type = SourceType.MEGA,
+                displayName = displayName,
+                configJson = Json.encodeToString(config),
+                enabled = true,
+                makeUploadTarget = makeTarget,
+            )
+            scheduler.setCameraUploadEnabled(true)
+            message = "$displayName connected. New photos will be copied to it."
+        } else {
+            linkingId = null
+            errors[id] = outcome.exceptionOrNull()?.message ?: "Could not connect to MEGA."
+        }
+        publish()
+    }
+
+    /**
      * Disconnects one source: tokens are cleared and the row is disabled, but
      * its indexed rows are kept so the timeline does not suddenly lose entries.
      * Nothing is ever deleted from the cloud itself.
      */
     suspend fun unlinkSource(id: String) {
         val source = repository.sourceById(id) ?: return
-        if (source.type != SourceType.GOOGLE_DRIVE) return
-
-        drives.forSource(id).tokens.unlink()
+        if (source.type == SourceType.MEGA) {
+            megas.unlink(id)
+        } else if (source.type == SourceType.GOOGLE_DRIVE) {
+            drives.forSource(id).tokens.unlink()
+        } else {
+            return
+        }
         repository.upsertCloudSource(
             id = id,
             type = source.type,
@@ -222,7 +297,7 @@ class AccountsController(
     /** Makes this cloud the destination for new camera photos. Exactly one may be. */
     fun setUploadTarget(id: String) {
         val source = repository.sourceById(id) ?: return
-        if (source.type != SourceType.GOOGLE_DRIVE || !source.enabled) return
+        if (source.type !in setOf(SourceType.GOOGLE_DRIVE, SourceType.MEGA) || !source.enabled) return
 
         repository.upsertCloudSource(
             id = id,
@@ -241,6 +316,7 @@ class AccountsController(
     fun consumeMessage() {
         message = null
         errors.clear()
+        errorTypes.clear()
         publish()
     }
 
@@ -257,6 +333,7 @@ class AccountsController(
         val rows = configured.map { source ->
             val linked = when (source.type) {
                 SourceType.GOOGLE_DRIVE -> drives.isLinked(source.id)
+                SourceType.MEGA -> megas.isLinked(source.id)
                 // The device source is always available; unsupported types never
                 // reach this point through the UI but render honestly if present.
                 SourceType.LOCAL -> true
@@ -267,13 +344,15 @@ class AccountsController(
                 type = source.type,
                 displayName = source.displayName,
                 state = when {
-                    source.type != SourceType.LOCAL && source.type != SourceType.GOOGLE_DRIVE -> LinkState.UNSUPPORTED
+                    source.type != SourceType.LOCAL &&
+                        source.type != SourceType.GOOGLE_DRIVE &&
+                        source.type != SourceType.MEGA -> LinkState.UNSUPPORTED
                     !oauthConfig.isConfigured && source.type == SourceType.GOOGLE_DRIVE -> LinkState.NOT_CONFIGURED
                     source.id == linkingId -> LinkState.LINKING
                     linked && source.enabled -> LinkState.LINKED
                     else -> LinkState.NOT_LINKED
                 },
-                canUpload = source.type == SourceType.GOOGLE_DRIVE,
+                canUpload = source.type == SourceType.GOOGLE_DRIVE || source.type == SourceType.MEGA,
                 isUploadTarget = source.isUploadTarget,
                 quota = quotas[source.id],
                 error = errors[source.id],
@@ -284,11 +363,15 @@ class AccountsController(
         // needs a card to live on — otherwise the "+" flow fails silently.
         for ((id, error) in errors) {
             if (configured.none { it.id == id }) {
+                val type = errorTypes[id] ?: SourceType.GOOGLE_DRIVE
                 rows += SourceAccount(
                     id = id,
-                    type = SourceType.GOOGLE_DRIVE,
-                    displayName = "Google Drive",
-                    state = if (oauthConfig.isConfigured) LinkState.NOT_LINKED else LinkState.NOT_CONFIGURED,
+                    type = type,
+                    displayName = if (type == SourceType.MEGA) "MEGA" else "Google Drive",
+                    state = when {
+                        !oauthConfig.isConfigured && type == SourceType.GOOGLE_DRIVE -> LinkState.NOT_CONFIGURED
+                        else -> LinkState.NOT_LINKED
+                    },
                     canUpload = true,
                     quota = quotas[id],
                     error = error,

@@ -2,11 +2,13 @@ package dev.photohub.shared.platform
 
 import android.net.Uri
 import android.provider.OpenableColumns
+import dev.photohub.shared.platform.MaterializedFile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.InputStream
 import java.security.MessageDigest
+import java.util.UUID
 
 /**
  * Opens [ref] whether it is a `content://` URI or a filesystem path.
@@ -44,6 +46,35 @@ actual suspend fun sha256OfFile(ref: String): String? = withContext(Dispatchers.
         digest.digest().toHexString()
     }.getOrNull()
 }
+
+/**
+ * Content URIs have no filesystem path a foreign SDK could open, so copy the
+ * bytes into the app's private cache and hand over that path instead.
+ */
+actual suspend fun materializeLocalFile(ref: String): MaterializedFile =
+    withContext(Dispatchers.IO) {
+        if (!ref.startsWith("content://")) {
+            val path = with(okio.Path.Companion) { ref.toPath() }
+            return@withContext MaterializedFile(path, false)
+        }
+
+        val input = AndroidPlatform.appContext.contentResolver.openInputStream(Uri.parse(ref))
+            ?: error("Cannot open $ref")
+        val dir = cacheDir / "upload-tmp"
+        fileSystem.createDirectories(dir)
+        val target = dir / "upload-${UUID.randomUUID()}.tmp"
+        input.use { stream ->
+            fileSystem.write(target) {
+                val buffer = ByteArray(COPY_BUFFER)
+                while (true) {
+                    val read = stream.read(buffer)
+                    if (read <= 0) break
+                    write(buffer, 0, read)
+                }
+            }
+        }
+        MaterializedFile(target, true)
+    }
 
 /**
  * Size of [ref], via the ContentResolver for content URIs.
@@ -84,6 +115,7 @@ actual fun fileSize(ref: String): Long? {
 }
 
 private const val HASH_BUFFER = 64 * 1024
+private const val COPY_BUFFER = 64 * 1024
 
 internal fun ByteArray.toHexString(): String {
     val hex = "0123456789abcdef"

@@ -293,41 +293,33 @@ interface MediaSource {
 }
 ```
 
-### Multiple cloud accounts (deferred, M6)
+### Multiple cloud accounts (implemented)
 
-The data model already supports N accounts: `Source` is a table of rows,
-`MediaItem.sourceId` is a foreign key to it, and `MediaSource`/`UploadTarget`
-are interfaces. The **wiring** does not. As of M3 the Drive account identity is
-a compile-time constant:
+`Source` is a table of rows and `MediaItem.sourceId` is a foreign key to it, so
+N accounts were always representable. The wiring is now too: each connected
+account has its own id, credentials namespace and cached client graph. The
+Drive account identity is no longer a compile-time constant:
 
 ```kotlin
-const val SOURCE_ID = "google_drive"                    // GoogleDriveSource
-single { OAuthTokenStore(get(), DriveSourceConfig.SOURCE_ID) }   // Modules.kt
+const val SOURCE_ID = "google_drive"                    // legacy row only
+
+// New instances: google_drive_<8 hex>, mega_<8 hex>
 ```
 
-That constant is simultaneously the `Source` primary key *and* the credential
-key namespace (`google_drive.refreshToken`), and `TokenProvider`, `DriveApi`,
-`DriveUploader` and `GoogleDriveSource` are all registered as Koin singletons.
-A second sign-in would therefore overwrite the first account's refresh token and
-its `Source` row in place — losing a connected account with no error.
+`SOURCE_ID` is now only the id of the original Drive row, kept so existing
+installs do not need a migration. Every other instance gets a generated id, and
+all secrets derive their key from it (`<sourceId>.refreshToken`,
+`<sourceId>.megaSession`).
 
-Until this is fixed, `AccountsController.linkDrive()` **refuses** when an
-account is already linked, and the user must disconnect first. Refusing is the
-deliberate choice: silent data loss is worse than a limitation.
+Per-account state lives in factories, not Koin singletons:
 
-The intended fix, applying to every cloud type rather than just Drive:
-
-1. **Source ids become instance data** — `"google_drive:alice@gmail.com"`, with
-   `SOURCE_ID` demoted to a prefix. `OAuthTokenStore` already derives its keys
-   as `"$sourceId.$field"`, so credential namespacing then comes for free.
-2. **Per-account factories replace singletons** — `TokenProvider`, `DriveApi`,
-   `DriveUploader`, `GoogleDriveSource` become parameterised factories (or a
-   `CloudAccountFactory` caching by source id).
-3. **Fetch the account identity at link time** (Drive `about?fields=user`) to
-   label accounts in the UI and to distinguish *re-linking the same account*
-   from *adding a new one*.
-4. **`AccountsController` exposes a list**, and the accounts screen gains an
-   "add another account" action per provider.
+- `DriveAccountFactory` / `MegaAccountFactory` cache one graph per source id:
+  tokens or session, refresh mutex, API and uploader.
+- `SourceRegistry` builds a `MediaSource` for a config row; `CurrentUploadTarget`
+  resolves the selected cloud at call time and dispatches by source type.
+- `AccountsController` exposes a list of source cards, with per-card connect,
+  disconnect and "Use for uploads" actions. Adding another account never
+  overwrites an existing one.
 
 `isUploadTarget` needs no change: exactly one source may hold it and
 `upsertCloudSource(makeUploadTarget = true)` clears it everywhere first, so
@@ -347,6 +339,18 @@ to reason about.
 ---
 
 ## 7. Source implementations
+
+### MEGA (`kmp-mega`, M4)
+
+`MegaSource` walks the cloud drive plus shared roots and maps image/video nodes
+by extension; Trash and Inbox are skipped. The SDK has no thumbnail endpoint, so
+`ThumbnailStore.fetchRemote()` asks the source to download and render a small
+JPEG into the app cache in 120-item batches, skipping videos above 50 MB.
+`MegaUploadTarget` creates `PhotoHub/YYYY/MM` on demand and uploads copies; on
+Android a `content://` camera URI is materialised into the app-private cache
+first because the SDK requires a filesystem path. Login stores only
+`dumpSession()` in the encrypted credential store, and quota comes from
+`getQuota()` when the Sources screen opens.
 
 ### Local media (`expect`/`actual`)
 

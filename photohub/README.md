@@ -232,6 +232,25 @@ The Android redirect scheme is declared literally in `AndroidManifest.xml`
 because a manifest cannot read runtime configuration. Changing the Android OAuth
 client means editing that scheme to match.
 
+## Connecting MEGA
+
+Open **Sources → + Add source → MEGA** and enter the account email, password and
+(optionally) the 2FA code. MEGA has no OAuth, so PhotoHub stores only the opaque
+session key returned by `dumpSession()` in the encrypted credential store — the
+password is never persisted. Disconnecting clears that session and disables the
+source but keeps every indexed photo in the timeline; nothing is removed from
+MEGA.
+
+Several MEGA accounts can be connected at once. Each gets its own source id
+(`mega_<8 hex>`), session namespace and client graph. One cloud at a time is the
+camera-upload target; use **Use for uploads** on a source card to switch.
+
+MEGA's SDK has no server-side thumbnails. PhotoHub downloads and renders a
+small JPEG into the app cache on the first refresh (120 items per pass, newest
+first), skipping videos over 50 MB. An account-wide storage figure is fetched
+only when the Sources screen opens. HEIC/HEIF files are indexed, but desktop
+thumbnail generation needs an ImageIO HEIF plugin to display them.
+
 ## Milestone status
 
 | Milestone | Scope | Status |
@@ -239,7 +258,7 @@ client means editing that scheme to match.
 | **M1** | KMP scaffold, SQLDelight schema, `expect`/`actual` stubs, both apps compile with empty timeline | **done — verified on device** |
 | **M2** | Local source: MediaStore (Android) + directory walk (desktop), date-grouped grid, thumbnails | **done — 1,212 items indexed on a Galaxy S21+, 22 on desktop** |
 | **M3** | Google Drive source + camera-upload pipeline | **desktop verified end-to-end: real sign-in, upload, and index against a live Drive account. Phone sign-in pending a console toggle** |
-| **M4** | MEGA source | not started — approach decided, see "MEGA decision" |
+| **M4** | MEGA source + multi-instance sources | implemented — login, list, thumbnail cache, upload target, quota; live-account verification pending |
 | **M5** | OneDrive source | not started |
 | **M6** | Takeout import, NAS archive source, installers, polish | not started |
 

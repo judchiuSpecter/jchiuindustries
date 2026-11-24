@@ -19,6 +19,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -32,6 +33,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import dev.photohub.shared.data.AccountsController
 import dev.photohub.shared.data.AccountsController.LinkState
@@ -58,6 +60,9 @@ fun AccountsScreen(
     val state by controller.state.collectAsState()
     val scope = rememberCoroutineScope()
     var showAddSource by remember { mutableStateOf(false) }
+    var megaTargetId by remember { mutableStateOf<String?>(null) }
+    var megaInitialEmail by remember { mutableStateOf("") }
+    var showMegaDialogForNew by remember { mutableStateOf(false) }
 
     // Storage is the source of truth, and it can change while this screen is
     // backgrounded (a link completing, tokens being cleared), so re-read on show.
@@ -91,7 +96,15 @@ fun AccountsScreen(
                 account = source,
                 setupPath = state.setupPath,
                 quotaLoading = state.quotaLoading,
-                onLink = { scope.launch { controller.linkDrive(source.id) } },
+                onLink = {
+                    if (source.type == SourceType.MEGA) {
+                        megaTargetId = source.id
+                        megaInitialEmail = source.displayName
+                            .removePrefix("MEGA (").removeSuffix(")")
+                    } else {
+                        scope.launch { controller.linkDrive(source.id) }
+                    }
+                },
                 onUnlink = { scope.launch { controller.unlinkSource(source.id) } },
                 onSetTarget = { controller.setUploadTarget(source.id) },
                 onUploadNow = controller::uploadNow,
@@ -124,6 +137,31 @@ fun AccountsScreen(
             onGoogleDrive = {
                 showAddSource = false
                 scope.launch { controller.linkDrive() }
+            },
+            onMega = {
+                showAddSource = false
+                showMegaDialogForNew = true
+                megaTargetId = null
+                megaInitialEmail = ""
+            },
+        )
+    }
+
+    if (megaTargetId != null || showMegaDialogForNew) {
+        LinkMegaDialog(
+            initialEmail = megaInitialEmail,
+            busy = state.sources.any {
+                it.id == megaTargetId && it.state == LinkState.LINKING
+            },
+            onDismiss = {
+                showMegaDialogForNew = false
+                megaTargetId = null
+            },
+            onSubmit = { email, password, mfa ->
+                val target = megaTargetId
+                showMegaDialogForNew = false
+                megaTargetId = null
+                scope.launch { controller.linkMega(email, password, mfa, target) }
             },
         )
     }
@@ -195,8 +233,13 @@ private fun SourceCard(
 
                 account.state == LinkState.NOT_LINKED -> {
                     Text(
-                        "Not connected. Signing in opens your browser; " +
-                            "PhotoHub only gets access to files it creates itself.",
+                        if (account.type == SourceType.MEGA) {
+                            "Not connected. Sign in with your MEGA email and password; " +
+                                "only a session key is kept."
+                        } else {
+                            "Not connected. Signing in opens your browser; " +
+                                "PhotoHub only gets access to files it creates itself."
+                        },
                         style = MaterialTheme.typography.bodyMedium,
                     )
                     Button(onClick = onLink) { Text("Connect") }
@@ -206,7 +249,8 @@ private fun SourceCard(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         CircularProgressIndicator(Modifier.size(20.dp))
                         Text(
-                            "  Waiting for Google in your browser…",
+                            if (account.type == SourceType.MEGA) "  Connecting to MEGA…"
+                            else "  Waiting for Google in your browser…",
                             style = MaterialTheme.typography.bodyMedium,
                         )
                     }
@@ -218,13 +262,18 @@ private fun SourceCard(
                         style = MaterialTheme.typography.bodyMedium,
                     )
                     val quota = account.quota
+                    val storageLabel = if (account.type == SourceType.MEGA) {
+                        "MEGA account storage"
+                    } else {
+                        "Google account storage"
+                    }
                     when {
                         quota?.usedBytes != null && quota.limitBytes != null &&
                             quota.limitBytes!! > 0 -> {
                             val used = quota.usedBytes!!
                             val limit = quota.limitBytes!!
                             Text(
-                                "Google account storage: ${formatBytes(used)} of ${formatBytes(limit)} used",
+                                "$storageLabel: ${formatBytes(used)} of ${formatBytes(limit)} used",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -235,7 +284,7 @@ private fun SourceCard(
                         }
                         quota?.usedBytes != null -> {
                             Text(
-                                "Google account storage: ${formatBytes(quota.usedBytes!!)} used",
+                                "$storageLabel: ${formatBytes(quota.usedBytes!!)} used",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -279,6 +328,7 @@ private fun SourceCard(
 private fun AddSourceDialog(
     onDismiss: () -> Unit,
     onGoogleDrive: () -> Unit,
+    onMega: () -> Unit,
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -302,7 +352,12 @@ private fun AddSourceDialog(
                             true,
                             onGoogleDrive,
                         )
-                        SourceType.MEGA -> SourceChoice("MEGA", "Planned — not implemented yet.", false, {})
+                        SourceType.MEGA -> SourceChoice(
+                            "MEGA",
+                            "Sign in with your MEGA account and copy new photos there.",
+                            true,
+                            onMega,
+                        )
                         SourceType.ONEDRIVE -> SourceChoice("OneDrive", "Planned — not implemented yet.", false, {})
                         SourceType.TAKEOUT -> SourceChoice(
                             "Google Photos Takeout",
@@ -344,6 +399,71 @@ private fun AddSourceDialog(
         },
         confirmButton = {},
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+/** Credentials for one MEGA instance. The password lives only in Compose state. */
+@Composable
+private fun LinkMegaDialog(
+    initialEmail: String,
+    busy: Boolean,
+    onDismiss: () -> Unit,
+    onSubmit: (String, String, String?) -> Unit,
+) {
+    var email by remember(initialEmail) { mutableStateOf(initialEmail) }
+    var password by remember { mutableStateOf("") }
+    var mfa by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Connect MEGA") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Only a resumable session is stored. Your password is never saved.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = email,
+                    onValueChange = { email = it },
+                    label = { Text("Email") },
+                    singleLine = true,
+                    enabled = !busy,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text("Password") },
+                    singleLine = true,
+                    enabled = !busy,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = mfa,
+                    onValueChange = { mfa = it },
+                    label = { Text("2FA code (if enabled)") },
+                    singleLine = true,
+                    enabled = !busy,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onSubmit(email.trim(), password, mfa.takeIf { it.isNotBlank() })
+                },
+                enabled = !busy && email.isNotBlank() && password.isNotBlank(),
+            ) {
+                Text(if (busy) "Connecting…" else "Connect")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !busy) { Text("Cancel") }
+        },
     )
 }
 

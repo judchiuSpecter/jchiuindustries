@@ -62,6 +62,9 @@ kotlin {
             // Filesystem
             implementation(libs.okio)
 
+            // MEGA (M4): per-account SDK graph lives in commonMain.
+            implementation(libs.mega)
+
             // Image loading
             implementation(libs.coil.compose)
             implementation(libs.coil.network.ktor)

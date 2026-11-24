@@ -66,6 +66,17 @@ class TimelineController(
                     cloudErrors += "${config.displayName}: ${failure.message ?: "sync failed"}"
                 }
             }
+            // MEGA has no server-side thumbnail URL, so its thumbnails have to
+            // be built from downloaded nodes. Do this per source (and in small
+            // batches) so one slow account cannot stall the rest of the grid.
+            if (config.type == SourceType.MEGA && result.isSuccess) {
+                thumbnails.fetchRemote(source, onProgress = { completed ->
+                    if (completed % THUMB_REFRESH_INTERVAL == 0) {
+                        _state.value = _state.value.copy(items = page())
+                    }
+                })
+            }
+
             // Show newly indexed items after every source, not just at the end:
             // one unreachable cloud must not hold up the rest of the grid.
             _state.value = _state.value.copy(items = page())

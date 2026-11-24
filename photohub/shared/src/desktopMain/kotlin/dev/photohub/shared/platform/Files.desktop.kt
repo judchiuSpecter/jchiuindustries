@@ -29,6 +29,10 @@ actual suspend fun sha256OfFile(ref: String): String? = withContext(Dispatchers.
 actual fun fileSize(ref: String): Long? =
     File(ref).takeIf { it.isFile }?.length()
 
+/** Desktop references are already real paths; no copy is needed. */
+actual suspend fun materializeLocalFile(ref: String): MaterializedFile =
+    MaterializedFile(with(okio.Path.Companion) { ref.toPath() }, false)
+
 private const val HASH_BUFFER = 64 * 1024
 
 internal fun ByteArray.toHexString(): String {

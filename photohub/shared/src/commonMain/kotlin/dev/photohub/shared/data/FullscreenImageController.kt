@@ -32,7 +32,7 @@ class FullscreenImageController(
         item.originalCachePath?.takeIf { File(it).exists() }?.let { return it }
 
         val config = repository.sourceById(item.sourceId) ?: return null
-        if (config.type != SourceType.GOOGLE_DRIVE || !config.enabled) return null
+        if (config.type !in setOf(SourceType.GOOGLE_DRIVE, SourceType.MEGA) || !config.enabled) return null
         val source = sources.create(config) ?: return null
 
         val remote = RemoteMedia(

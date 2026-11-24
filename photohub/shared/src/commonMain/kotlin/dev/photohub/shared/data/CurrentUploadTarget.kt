@@ -1,6 +1,8 @@
 package dev.photohub.shared.data
 
 import dev.photohub.shared.auth.DriveAccountFactory
+import dev.photohub.shared.auth.MegaAccounts
+import dev.photohub.shared.model.SourceType
 
 /**
  * Resolves the upload target from storage on every call instead of being bound
@@ -15,6 +17,7 @@ import dev.photohub.shared.auth.DriveAccountFactory
 class CurrentUploadTarget(
     private val repository: MediaRepository,
     private val drives: DriveAccountFactory,
+    private val megas: MegaAccounts,
 ) : UploadTarget {
 
     override val sourceId: String
@@ -28,6 +31,12 @@ class CurrentUploadTarget(
     ): String {
         val id = sourceId
         require(id.isNotBlank()) { "No cloud account is set as the upload target." }
-        return drives.forSource(id).target.upload(local, remoteFolder, mimeType, onProgress)
+        val config = requireNotNull(repository.sourceById(id)) {
+            "The upload target is no longer configured."
+        }
+        return when (config.type) {
+            SourceType.MEGA -> megas.targetFor(config).upload(local, remoteFolder, mimeType, onProgress)
+            else -> drives.forSource(id).target.upload(local, remoteFolder, mimeType, onProgress)
+        }
     }
 }
