@@ -36,6 +36,18 @@ data class RemoteMedia(
     val contentHash: String? = null,
 )
 
+/**
+ * Account-wide Google storage quota.
+ *
+ * These are the whole account's numbers, not just PhotoHub's uploads. Missing
+ * values are normal on some restricted grants, so every field is nullable.
+ */
+data class StorageQuota(
+    val limitBytes: Long? = null,
+    val usedBytes: Long? = null,
+    val usedInDriveBytes: Long? = null,
+)
+
 /** A configured source as persisted in the DB, with decoded config. */
 data class SourceConfig(
     val id: String,

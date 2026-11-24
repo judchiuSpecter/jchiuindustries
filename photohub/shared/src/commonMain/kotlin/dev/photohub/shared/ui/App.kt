@@ -24,6 +24,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import dev.photohub.shared.data.AccountsController
+import dev.photohub.shared.data.FullscreenImageController
 import dev.photohub.shared.data.SettingsStore
 import dev.photohub.shared.data.TimelineController
 import dev.photohub.shared.db.MediaItem
@@ -49,6 +50,7 @@ fun App(
     accounts: AccountsController? = null,
     refreshOnStart: Boolean = true,
     settings: SettingsStore = SettingsStore(),
+    fullscreenImages: FullscreenImageController? = null,
 ) {
     val state by controller.state.collectAsState()
     val scope = rememberCoroutineScope()
@@ -143,7 +145,8 @@ fun App(
                 if (selectedItem != null) {
                     FullscreenPhotoViewer(
                         item = selectedItem!!,
-                        onDismiss = { selectedItem = null }
+                        onDismiss = { selectedItem = null },
+                        images = fullscreenImages,
                     )
                 }
             }

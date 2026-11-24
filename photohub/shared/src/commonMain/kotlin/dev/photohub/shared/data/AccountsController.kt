@@ -5,6 +5,7 @@ import dev.photohub.shared.auth.DriveLinkCoordinator
 import dev.photohub.shared.auth.GoogleOAuthConfig
 import dev.photohub.shared.auth.OAuthConfigLoader
 import dev.photohub.shared.model.SourceType
+import dev.photohub.shared.model.StorageQuota
 import dev.photohub.shared.platform.BackgroundScheduler
 import dev.photohub.shared.source.drive.DriveSourceConfig
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -49,6 +50,8 @@ class AccountsController(
         val state: LinkState,
         val canUpload: Boolean = false,
         val isUploadTarget: Boolean = false,
+        /** Account-wide storage quota, fetched only while this screen is open. */
+        val quota: StorageQuota? = null,
         val error: String? = null,
     )
 
@@ -56,6 +59,7 @@ class AccountsController(
         val sources: List<SourceAccount> = emptyList(),
         /** Set after a successful action so the UI can confirm it. */
         val message: String? = null,
+        val quotaLoading: Boolean = false,
         val oauthConfigured: Boolean = true,
         /** Where to put `google-oauth.json`, shown when OAuth is not configured. */
         val setupPath: String = OAuthConfigLoader.expectedPath(),
@@ -64,6 +68,9 @@ class AccountsController(
     /** Transient UI detail kept outside [State] so a storage refresh cannot lose it. */
     private var linkingId: String? = null
     private val errors = mutableMapOf<String, String>()
+    /** Last known quota per source; kept so an offline visit still shows a value. */
+    private val quotas = mutableMapOf<String, StorageQuota>()
+    private var quotaLoading = false
     private var message: String? = null
 
     private val _state = MutableStateFlow(buildState())
@@ -72,6 +79,37 @@ class AccountsController(
     /** Recomputes from storage; call when the screen is shown. */
     fun refresh() {
         _state.value = buildState()
+    }
+
+    /**
+     * Fetches account-wide storage quota for each connected Drive source.
+     *
+     * Called from the sources screen only. It is deliberately not part of sync:
+     * quota is informational, changes independently of our index, and a network
+     * failure must not affect the timeline. The last successful value stays on
+     * screen when a later fetch fails.
+     */
+    suspend fun refreshQuotas() {
+        val ids = repository.allSources()
+            .filter { it.type == SourceType.GOOGLE_DRIVE && it.enabled && drives.isLinked(it.id) }
+            .map { it.id }
+        if (ids.isEmpty()) return
+
+        quotaLoading = true
+        publish()
+        for (id in ids) {
+            // `about` is already a Result — no need for a second runCatching.
+            val quota = drives.forSource(id).api.about().getOrNull()?.storageQuota
+            if (quota != null) {
+                quotas[id] = StorageQuota(
+                    limitBytes = quota.limit?.toLongOrNull(),
+                    usedBytes = quota.usage?.toLongOrNull(),
+                    usedInDriveBytes = quota.usageInDrive?.toLongOrNull(),
+                )
+            }
+        }
+        quotaLoading = false
+        publish()
     }
 
     /**
@@ -237,6 +275,7 @@ class AccountsController(
                 },
                 canUpload = source.type == SourceType.GOOGLE_DRIVE,
                 isUploadTarget = source.isUploadTarget,
+                quota = quotas[source.id],
                 error = errors[source.id],
             )
         }.toMutableList()
@@ -251,6 +290,7 @@ class AccountsController(
                     displayName = "Google Drive",
                     state = if (oauthConfig.isConfigured) LinkState.NOT_LINKED else LinkState.NOT_CONFIGURED,
                     canUpload = true,
+                    quota = quotas[id],
                     error = error,
                 )
             }
@@ -259,6 +299,7 @@ class AccountsController(
         return State(
             sources = rows,
             message = message,
+            quotaLoading = quotaLoading,
             oauthConfigured = oauthConfig.isConfigured,
         )
     }

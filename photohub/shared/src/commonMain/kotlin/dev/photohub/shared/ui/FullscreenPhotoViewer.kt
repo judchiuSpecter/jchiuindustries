@@ -1,60 +1,66 @@
 package dev.photohub.shared.ui
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import dev.photohub.shared.data.FullscreenImageController
 import dev.photohub.shared.db.MediaItem
+import dev.photohub.shared.platform.FullscreenDismissHandler
 import java.io.File
 
 /**
  * Fullscreen photo/video viewer that replaces the timeline grid.
  *
- * - Shows the original-resolution image if available (cached or via content:// URI)
- * - On Android with local source: Coil loads the content:// URI and displays the full image
- * - On Drive: shows the cached thumbnail + TODO download original button (TODO)
- * - On desktop (local source): passes the file path to Coil as a [File] model
- * - Close button dismisses back to the timeline
+ * - Local items load from their `content://` URI (Android) or file path (desktop).
+ * - Cloud items start from their thumbnail URL and download the original through
+ *   the owning source so the full image is shown once available.
+ * - Dismissal is platform-native: device Back on Android, Escape on desktop.
+ *   There is deliberately no on-screen close button.
  */
 @Composable
 fun FullscreenPhotoViewer(
     item: MediaItem,
     onDismiss: () -> Unit,
+    images: FullscreenImageController? = null,
 ) {
-    // Resolve the image to display. Priority:
-    // 1. Cached full-resolution original (e.g. Drive download) → File model.
-    // 2. content:// MediaStore URI (Android local photo) → String model (Coil reads natively).
-    // 3. Cached thumbnail → File model (desktop) or URI string.
-    // 4. Absolute filesystem path (desktop local source) → File model.
-    val imageModel: Any? = remember(item) {
-        fun existingFile(path: String?): File? =
-            path?.takeIf { it.isNotBlank() }?.let { File(it) }?.takeIf { it.exists() }
+    var imageModel by remember(item.id) { mutableStateOf(initialModel(item)) }
+    var downloading by remember(item.id) { mutableStateOf(false) }
 
-        // Content URIs must stay as strings so Coil's UriFetcher handles them.
-        item.remoteThumbUrl?.takeIf { it.startsWith("content://") }
-            ?: existingFile(item.originalCachePath)
-            ?: existingFile(item.thumbCachePath)
-            ?: existingFile(item.remoteId)
+    // Android Back / desktop Escape. Placed first so the focusable desktop box
+    // sits behind the image and cannot intercept clicks.
+    FullscreenDismissHandler(onDismiss = onDismiss)
+
+    // A cloud item starts with its thumbnail URL. Try to upgrade it to the
+    // original through the source that owns this account; failure is non-fatal
+    // because the thumbnail is already visible.
+    LaunchedEffect(item.id) {
+        val current = imageModel
+        if (images == null || current !is String || !current.startsWith("https://")) return@LaunchedEffect
+        downloading = true
+        val original = images.ensureOriginal(item)
+        if (original != null) imageModel = File(original)
+        downloading = false
     }
 
-    val isVideo = item.isVideo == 1L
-
-    // Main content.
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
-    ) {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Surface(
             modifier = Modifier.fillMaxSize(),
             color = MaterialTheme.colorScheme.background,
@@ -68,7 +74,6 @@ fun FullscreenPhotoViewer(
                         modifier = Modifier.fillMaxSize(),
                     )
                 } else {
-                    // Placeholder when no image is resolvable.
                     Box(
                         modifier = Modifier.size(200.dp),
                         contentAlignment = Alignment.Center,
@@ -83,35 +88,47 @@ fun FullscreenPhotoViewer(
             }
         }
 
-        // Video indicator.
-        if (isVideo) {
-            Box(
+        if (downloading) {
+            Row(
                 modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .offset(x = 16.dp, y = 16.dp),
-                contentAlignment = Alignment.Center
+                    .align(Alignment.TopCenter)
+                    .padding(top = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
+                CircularProgressIndicator(Modifier.size(18.dp))
                 Text(
-                    "▶",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
+                    "  Loading full image…",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
 
-        // Close button — dismiss back to the timeline. Universal across platforms.
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .offset(x = 16.dp, y = 32.dp),
-        ) {
-            Button(onClick = onDismiss) {
-                Text(
-                    "✕",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-            }
+        // Videos are not playable yet; at least mark them so a still frame is
+        // not mistaken for a photo.
+        if (item.isVideo == 1L) {
+            Text(
+                "▶",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.align(Alignment.BottomEnd).offset(x = (-12).dp, y = (-12).dp),
+            )
         }
     }
+}
+
+/** Resolves what can be shown without a network request. */
+private fun initialModel(item: MediaItem): Any? {
+    fun existingFile(path: String?): File? =
+        path?.takeIf { it.isNotBlank() }?.let { File(it) }?.takeIf { it.exists() }
+
+    // Content URIs must stay as strings so Coil's UriFetcher handles them.
+    return item.remoteThumbUrl?.takeIf { it.startsWith("content://") }
+        ?: existingFile(item.originalCachePath)
+        ?: existingFile(item.thumbCachePath)
+        ?: existingFile(item.remoteId)
+        // A Drive thumbnailLink is a plain https URL. Coil loads it directly
+        // (the grid does the same), so the image appears immediately while the
+        // original is fetched in the background.
+        ?: item.remoteThumbUrl?.takeIf { it.startsWith("https://") }
 }

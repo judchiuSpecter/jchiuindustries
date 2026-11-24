@@ -77,6 +77,10 @@ class MediaRepository(private val db: PhotoHubDatabase) {
     fun sourceById(id: String): SourceConfig? =
         db.sourceQueries.selectById(id).executeAsOneOrNull()?.toSourceConfig()
 
+    /** Records a downloaded original so the fullscreen viewer can reuse it offline. */
+    fun setOriginalCache(path: String, mediaId: String) =
+        db.mediaItemQueries.setOriginalCache(path, mediaId)
+
     /** The source camera uploads go to, or null when none is configured. */
     fun uploadTarget(): SourceConfig? =
         db.sourceQueries.selectUploadTarget().executeAsOneOrNull()?.toSourceConfig()

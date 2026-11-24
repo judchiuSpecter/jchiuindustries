@@ -80,6 +80,8 @@ kotlin {
             implementation(libs.androidx.work.runtime)
             implementation(libs.androidx.security.crypto)
             implementation(libs.androidx.exifinterface)
+            // BackHandler for the fullscreen viewer's system-back dismissal.
+            implementation(libs.androidx.activity.compose)
         }
 
         desktopMain.dependencies {

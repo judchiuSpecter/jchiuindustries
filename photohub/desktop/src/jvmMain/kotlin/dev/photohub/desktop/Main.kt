@@ -9,6 +9,7 @@ import dev.photohub.shared.auth.DesktopCredentialStore
 import dev.photohub.shared.auth.DesktopRedirectCapture
 import dev.photohub.shared.auth.RedirectCapture
 import dev.photohub.shared.data.AccountsController
+import dev.photohub.shared.data.FullscreenImageController
 import dev.photohub.shared.data.SettingsStore
 import dev.photohub.shared.data.TimelineController
 import dev.photohub.shared.di.initKoin
@@ -33,6 +34,7 @@ fun main() {
     val controller = koin.get<TimelineController>()
     val accounts = koin.get<AccountsController>()
     val settings = koin.get<SettingsStore>()
+    val fullscreenImages = koin.get<FullscreenImageController>()
 
     application {
         Window(
@@ -46,6 +48,7 @@ fun main() {
                     accounts = accounts,
                     refreshOnStart = true,
                     settings = settings,
+                    fullscreenImages = fullscreenImages,
                 )
         }
     }

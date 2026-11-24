@@ -56,13 +56,26 @@ data class DriveFileList(
     val nextPageToken: String? = null,
 )
 
-/** Minimal `about` projection, used to label a connected account with its email. */
+/** Minimal `about` projection: account identity plus account-wide storage quota. */
 @Serializable
-data class DriveAbout(val user: User? = null) {
+data class DriveAbout(
+    val user: User? = null,
+    val storageQuota: StorageQuota? = null,
+) {
     @Serializable
     data class User(
         val emailAddress: String? = null,
         val displayName: String? = null,
+    )
+
+    /** Drive reports 64-bit byte counts as JSON strings. */
+    @Serializable
+    data class StorageQuota(
+        val limit: String? = null,
+        /** Total storage used by the Google account (Drive, Gmail, Photos). */
+        val usage: String? = null,
+        val usageInDrive: String? = null,
+        val usageInDriveTrash: String? = null,
     )
 }
 
@@ -231,7 +244,9 @@ class DriveApi(
      * not a precondition for a working source.
      */
     suspend fun about(): Result<DriveAbout> = runCatching {
-        val url = "$baseUrl/about?fields=${"user(emailAddress,displayName)".urlEncode()}"
+        val fields = "user(emailAddress,displayName)," +
+            "storageQuota(limit,usage,usageInDrive,usageInDriveTrash)"
+        val url = "$baseUrl/about?fields=${fields.urlEncode()}"
         json.decodeFromString(authorizedGet(url).requireSuccess("read account"))
     }
 

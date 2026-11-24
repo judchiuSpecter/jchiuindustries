@@ -38,6 +38,10 @@ import kotlin.test.assertTrue
  */
 class AccountsControllerTest {
 
+    private companion object {
+        const val GOOD_ABOUT = """{"user":{"emailAddress":"jud@example.com"},"storageQuota":{"limit":"15000000000","usage":"4230000000","usageInDrive":"2100000000"}}"""
+    }
+
     private class MemStore : CredentialStore {
         val v = mutableMapOf<String, String>()
         override fun get(key: String) = v[key]
@@ -68,13 +72,14 @@ class AccountsControllerTest {
         redirect: RedirectResult = RedirectResult("code", "fixed", null),
         repository: MediaRepository = repo(),
         generateSourceId: () -> String = sourceIds("google_drive_test"),
+        aboutBody: () -> String = { GOOD_ABOUT },
     ): Harness {
         val store = MemStore()
         val http = HttpClient(
             MockEngine { request ->
                 // The link flow calls both the token endpoint and Drive's `about`.
                 val body = if (request.url.encodedPath.contains("about")) {
-                    """{"user":{"emailAddress":"jud@example.com"}}"""
+                    aboutBody()
                 } else {
                     tokenBody
                 }
@@ -242,6 +247,38 @@ class AccountsControllerTest {
         assertEquals("google_drive_a", h.repository.uploadTarget()?.id)
         assertTrue(h.account("google_drive_a").isUploadTarget)
         assertEquals(1, h.repository.allSources().count { it.isUploadTarget })
+    }
+
+    @Test
+    fun quotaIsFetchedOnDemandNotDuringSync() = runTest {
+        val h = build()
+        h.controller.linkDrive()
+        // Linking calls `about` for the email, but quota is only shown when the
+        // user opens the sources screen and asks for it explicitly.
+        assertNull(h.account("google_drive_test").quota)
+
+        h.controller.refreshQuotas()
+
+        val quota = h.account("google_drive_test").quota!!
+        assertEquals(15_000_000_000L, quota.limitBytes)
+        assertEquals(4_230_000_000L, quota.usedBytes)
+        assertEquals(2_100_000_000L, quota.usedInDriveBytes)
+        assertTrue(!h.controller.state.value.quotaLoading)
+    }
+
+    @Test
+    fun quotaFailureDoesNotEraseTheLastKnownValue() = runTest {
+        var offline = false
+        val h = build(aboutBody = { if (offline) "not json" else GOOD_ABOUT })
+        h.controller.linkDrive()
+        h.controller.refreshQuotas()
+        assertEquals(4_230_000_000L, h.account("google_drive_test").quota!!.usedBytes)
+
+        // A later offline visit must not blank out the cached number.
+        offline = true
+        h.controller.refreshQuotas()
+        assertEquals(4_230_000_000L, h.account("google_drive_test").quota!!.usedBytes)
+        assertTrue(!h.controller.state.value.quotaLoading)
     }
 
     @Test

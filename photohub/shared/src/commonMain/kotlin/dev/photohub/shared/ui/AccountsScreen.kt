@@ -16,6 +16,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -60,7 +61,12 @@ fun AccountsScreen(
 
     // Storage is the source of truth, and it can change while this screen is
     // backgrounded (a link completing, tokens being cleared), so re-read on show.
-    LaunchedEffect(Unit) { controller.refresh() }
+    LaunchedEffect(Unit) {
+        controller.refresh()
+        // Quota is a live, account-wide number: fetch only while this screen is
+        // open, not as part of the timeline sync.
+        controller.refreshQuotas()
+    }
 
     Column(
         modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
@@ -84,6 +90,7 @@ fun AccountsScreen(
             SourceCard(
                 account = source,
                 setupPath = state.setupPath,
+                quotaLoading = state.quotaLoading,
                 onLink = { scope.launch { controller.linkDrive(source.id) } },
                 onUnlink = { scope.launch { controller.unlinkSource(source.id) } },
                 onSetTarget = { controller.setUploadTarget(source.id) },
@@ -126,6 +133,7 @@ fun AccountsScreen(
 private fun SourceCard(
     account: SourceAccount,
     setupPath: String,
+    quotaLoading: Boolean,
     onLink: () -> Unit,
     onUnlink: () -> Unit,
     onSetTarget: () -> Unit,
@@ -209,6 +217,37 @@ private fun SourceCard(
                         "Connected. New photos are copied to PhotoHub/YYYY/MM.",
                         style = MaterialTheme.typography.bodyMedium,
                     )
+                    val quota = account.quota
+                    when {
+                        quota?.usedBytes != null && quota.limitBytes != null &&
+                            quota.limitBytes!! > 0 -> {
+                            val used = quota.usedBytes!!
+                            val limit = quota.limitBytes!!
+                            Text(
+                                "Google account storage: ${formatBytes(used)} of ${formatBytes(limit)} used",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            LinearProgressIndicator(
+                                progress = { (used.toFloat() / limit).coerceIn(0f, 1f) },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                        quota?.usedBytes != null -> {
+                            Text(
+                                "Google account storage: ${formatBytes(quota.usedBytes!!)} used",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        quotaLoading -> {
+                            Text(
+                                "Checking storage…",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (!account.isUploadTarget) {
                             OutlinedButton(onClick = onSetTarget) { Text("Use for uploads") }
@@ -381,4 +420,21 @@ private fun ThemeMode.label(): String = when (this) {
     ThemeMode.SYSTEM -> "System"
     ThemeMode.LIGHT -> "Light"
     ThemeMode.DARK -> "Dark"
+}
+
+/** Human-readable quota sizes; Google reports bytes in decimal units. */
+private fun formatBytes(bytes: Long): String {
+    val units = listOf("B", "KB", "MB", "GB", "TB")
+    var value = bytes.toDouble()
+    var unit = 0
+    while (value >= 1000.0 && unit < units.lastIndex) {
+        value /= 1000.0
+        unit++
+    }
+    val number = if (unit == 0 || value >= 100.0) {
+        value.toLong().toString()
+    } else {
+        value.toString().take(4)
+    }
+    return "$number ${units[unit]}"
 }

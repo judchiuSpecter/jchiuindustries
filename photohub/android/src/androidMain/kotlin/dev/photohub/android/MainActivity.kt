@@ -18,6 +18,7 @@ import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import dev.photohub.shared.auth.AndroidRedirectCapture
 import dev.photohub.shared.data.AccountsController
+import dev.photohub.shared.data.FullscreenImageController
 import dev.photohub.shared.data.SettingsStore
 import dev.photohub.shared.data.TimelineController
 import dev.photohub.shared.ui.App
@@ -28,6 +29,7 @@ class MainActivity : ComponentActivity() {
     private val accounts: AccountsController by inject()
     private val redirectCapture: AndroidRedirectCapture by inject()
     private val settings: SettingsStore by inject()
+    private val fullscreenImages: FullscreenImageController by inject()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -56,6 +58,7 @@ class MainActivity : ComponentActivity() {
                 accounts = accounts,
                 refreshOnStart = granted,
                 settings = settings,
+                fullscreenImages = fullscreenImages,
             )
         }
     }
