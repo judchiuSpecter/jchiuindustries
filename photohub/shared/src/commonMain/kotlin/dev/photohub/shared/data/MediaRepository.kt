@@ -126,6 +126,9 @@ class MediaRepository(private val db: PhotoHubDatabase) {
         )
     }
 
+    /** Clears the upload-target flag on one source (used when it is disconnected). */
+    fun clearUploadTarget(id: String) = db.sourceQueries.clearUploadTarget(id)
+
     /** Removes a source; its media rows cascade away via the foreign key. */
     fun deleteSource(id: String) = db.sourceQueries.delete(id)
 

@@ -94,3 +94,49 @@ internal fun ByteArray.toHexString(): String {
         }
     }
 }
+
+/**
+ * Reads a byte range, seeking by skipping since a content stream is not
+ * seekable. Upload chunks are read in increasing order, so this stays linear
+ * overall rather than re-reading the whole file per chunk.
+ */
+actual suspend fun readChunk(ref: String, offset: Long, length: Int): ByteArray? =
+    withContext(Dispatchers.IO) {
+        runCatching {
+            openStream(ref)?.use { stream ->
+                var remaining = offset
+                while (remaining > 0) {
+                    val skipped = stream.skip(remaining)
+                    if (skipped <= 0) return@withContext null
+                    remaining -= skipped
+                }
+
+                val buffer = ByteArray(length)
+                var filled = 0
+                while (filled < length) {
+                    val read = stream.read(buffer, filled, length - filled)
+                    if (read <= 0) break
+                    filled += read
+                }
+                if (filled == length) buffer else buffer.copyOf(filled)
+            }
+        }.getOrNull()
+    }
+
+/** Asks the ContentResolver for the real name behind a content URI. */
+actual fun displayName(ref: String): String {
+    if (!ref.startsWith("content://")) return File(ref).name
+
+    val uri = runCatching { Uri.parse(ref) }.getOrNull() ?: return ref.substringAfterLast('/')
+    runCatching {
+        AndroidPlatform.appContext.contentResolver
+            .query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+            ?.use { cursor ->
+                val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (index >= 0 && cursor.moveToFirst() && !cursor.isNull(index)) {
+                    return cursor.getString(index)
+                }
+            }
+    }
+    return ref.substringAfterLast('/')
+}

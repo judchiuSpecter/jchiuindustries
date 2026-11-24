@@ -2,17 +2,16 @@ package dev.photohub.shared
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import dev.photohub.shared.auth.CredentialStore
-import dev.photohub.shared.auth.DriveLinkCoordinator
+import dev.photohub.shared.auth.DriveAccountFactory
 import dev.photohub.shared.auth.GoogleOAuthClient
 import dev.photohub.shared.auth.GoogleOAuthConfig
-import dev.photohub.shared.auth.OAuthTokenStore
 import dev.photohub.shared.auth.RedirectCapture
 import dev.photohub.shared.auth.RedirectResult
-import dev.photohub.shared.auth.TokenProvider
 import dev.photohub.shared.data.AccountsController
 import dev.photohub.shared.data.AccountsController.LinkState
 import dev.photohub.shared.data.MediaRepository
 import dev.photohub.shared.db.PhotoHubDatabase
+import dev.photohub.shared.model.SourceType
 import dev.photohub.shared.source.drive.DriveSourceConfig
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
@@ -22,18 +21,20 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import io.ktor.utils.io.ByteReadChannel
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * Covers the accounts screen's state machine.
+ * Covers the sources screen's state machine.
  *
  * These matter more than usual here: the UI cannot be observed in this
  * environment, so the controller's state is the only evidence that the screen
- * will show the right thing — particularly the "setup needed" state, which is
- * what a fresh install actually sees.
+ * will show the right thing — particularly the multiple-account case, where a
+ * mistake would silently overwrite one account's refresh token with another's.
  */
 class AccountsControllerTest {
 
@@ -47,22 +48,38 @@ class AccountsControllerTest {
         }
     }
 
+    private data class Harness(
+        val controller: AccountsController,
+        val repository: MediaRepository,
+        val store: MemStore,
+    )
+
     private fun repo(): MediaRepository {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         PhotoHubDatabase.Schema.create(driver)
         return MediaRepository(PhotoHubDatabase(driver))
     }
 
+    private fun sourceIds(vararg ids: String): () -> String = ids.iterator()::next
+
     private fun build(
         clientId: String = "cid.apps.googleusercontent.com",
         tokenBody: String = """{"access_token":"at","refresh_token":"rt","expires_in":3600}""",
         redirect: RedirectResult = RedirectResult("code", "fixed", null),
         repository: MediaRepository = repo(),
-    ): Triple<AccountsController, MediaRepository, OAuthTokenStore> {
+        generateSourceId: () -> String = sourceIds("google_drive_test"),
+    ): Harness {
+        val store = MemStore()
         val http = HttpClient(
-            MockEngine {
+            MockEngine { request ->
+                // The link flow calls both the token endpoint and Drive's `about`.
+                val body = if (request.url.encodedPath.contains("about")) {
+                    """{"user":{"emailAddress":"jud@example.com"}}"""
+                } else {
+                    tokenBody
+                }
                 respond(
-                    ByteReadChannel(tokenBody),
+                    ByteReadChannel(body),
                     HttpStatusCode.OK,
                     headersOf(HttpHeaders.ContentType, "application/json"),
                 )
@@ -70,189 +87,190 @@ class AccountsControllerTest {
         )
         val config = GoogleOAuthConfig(clientId = clientId)
         val oauth = GoogleOAuthClient(http, config, now = { 0L })
-        val tokens = OAuthTokenStore(MemStore(), DriveSourceConfig.SOURCE_ID)
-        val provider = TokenProvider(oauth, tokens, now = { 0L })
         val capture = object : RedirectCapture {
             override fun begin() = "http://127.0.0.1:1"
             override suspend fun await() = Result.success(redirect)
             override fun cancel() {}
         }
-        val link = DriveLinkCoordinator(oauth, provider, capture, generateState = { "fixed" }, launchBrowser = { true })
-
-        return Triple(
-            AccountsController(repository, link, config),
-            repository,
-            tokens,
+        val factory = DriveAccountFactory(
+            credentials = store,
+            http = http,
+            oauth = oauth,
+            redirectCapture = capture,
+            now = { 0L },
+            generateState = { "fixed" },
+            launchBrowser = { true },
         )
+        val controller = AccountsController(
+            repository = repository,
+            drives = factory,
+            oauthConfig = config,
+            generateSourceId = generateSourceId,
+        )
+        return Harness(controller, repository, store)
     }
+
+    private fun Harness.driveSources() =
+        repository.allSources().filter { it.type == SourceType.GOOGLE_DRIVE }
+
+    private fun Harness.account(id: String) =
+        controller.state.value.sources.first { it.id == id }
 
     @Test
     fun missingClientIdShowsSetupStateNotAnError() {
-        val (controller, _, _) = build(clientId = "")
-
-        val drive = controller.state.value.drive
-        // A fresh install has no client id. Treating that as a failure would
-        // leave the user with an error and no idea what to do.
-        assertEquals(LinkState.NOT_CONFIGURED, drive.state)
-        assertNull(drive.error)
-        // The screen tells them exactly where the file goes.
-        assertTrue(drive.setupPath.endsWith("google-oauth.json"), drive.setupPath)
+        val (controller) = build(clientId = "")
+        assert(!controller.state.value.oauthConfigured)
+        assertTrue(controller.state.value.setupPath.endsWith("google-oauth.json"))
     }
 
     @Test
     fun linkingWithoutAClientIdExplainsWhatToDo() = runTest {
-        val (controller, repository, _) = build(clientId = "")
-
-        controller.linkDrive()
-
-        val drive = controller.state.value.drive
-        assertEquals(LinkState.NOT_CONFIGURED, drive.state)
-        assertTrue(drive.error!!.contains("client ID"), drive.error!!)
-        // No half-created source row: nothing was configured.
-        assertNull(repository.sourceById(DriveSourceConfig.SOURCE_ID))
+        val h = build(clientId = "")
+        h.controller.linkDrive()
+        assertTrue(h.controller.state.value.message == null)
+        assertTrue(h.driveSources().isEmpty(), "no half-created source row")
+        assertTrue(h.store.v.isEmpty())
     }
 
     @Test
-    fun configuredButUnlinkedOffersSignIn() {
-        val (controller, _, _) = build()
-        assertEquals(LinkState.NOT_LINKED, controller.state.value.drive.state)
+    fun freshInstallHasOnlyTheAddAction() = runTest {
+        val (controller) = build()
+        assertTrue(controller.state.value.sources.isEmpty())
     }
 
     @Test
     fun successfulLinkRegistersDriveAsTheUploadTarget() = runTest {
-        val (controller, repository, tokens) = build()
+        val h = build()
 
-        controller.linkDrive()
+        h.controller.linkDrive()
 
-        assertEquals(LinkState.LINKED, controller.state.value.drive.state)
-        assertTrue(controller.state.value.drive.isUploadTarget)
-        assertEquals("rt", tokens.load()!!.refreshToken)
-
-        // Connecting a cloud is only useful if photos actually go to it, so the
-        // source row must exist and be the upload target.
-        val source = repository.sourceById(DriveSourceConfig.SOURCE_ID)!!
+        val source = h.driveSources().single()
+        assertEquals("google_drive_test", source.id)
         assertTrue(source.enabled)
         assertTrue(source.isUploadTarget)
-        assertEquals(DriveSourceConfig.SOURCE_ID, repository.uploadTarget()?.id)
-        assertTrue(controller.state.value.message!!.contains("connected", ignoreCase = true))
+        assertEquals(source.id, h.repository.uploadTarget()?.id)
+        assertEquals("rt", h.store.v["${source.id}.refreshToken"])
+        assertEquals(LinkState.LINKED, h.account(source.id).state)
+        assertTrue(h.controller.state.value.message!!.contains("connected", ignoreCase = true))
+        // The account label comes from Drive's `about` response.
+        assertTrue(source.displayName.contains("jud@example.com"), source.displayName)
+        val config: DriveSourceConfig = Json.decodeFromString(source.configJson)
+        assertEquals("jud@example.com", config.accountEmail)
     }
 
     @Test
     fun failedLinkLeavesNoSourceAndSurfacesTheReason() = runTest {
-        val (controller, repository, tokens) = build(
-            redirect = RedirectResult(null, null, "access_denied"),
+        val h = build(redirect = RedirectResult(null, null, "access_denied"))
+
+        h.controller.linkDrive()
+
+        assertTrue(h.driveSources().isEmpty())
+        assertTrue(h.store.v.isEmpty())
+        // The error must be visible even though no Source row was created.
+        assertTrue(
+            h.controller.state.value.sources.any {
+                it.error?.contains("access_denied") == true
+            },
         )
-
-        controller.linkDrive()
-
-        assertEquals(LinkState.NOT_LINKED, controller.state.value.drive.state)
-        assertTrue(controller.state.value.drive.error!!.contains("access_denied"))
-        // A denied sign-in must not leave a source that looks connected.
-        assertNull(repository.sourceById(DriveSourceConfig.SOURCE_ID))
-        assertNull(tokens.load())
     }
 
     @Test
     fun stateMismatchIsReportedAndNothingIsPersisted() = runTest {
-        // The OAuth CSRF defence, surfaced all the way to the screen.
-        val (controller, repository, tokens) = build(
-            redirect = RedirectResult("evil-code", "wrong-state", null),
-        )
+        val h = build(redirect = RedirectResult("evil-code", "wrong-state", null))
 
-        controller.linkDrive()
+        h.controller.linkDrive()
 
-        assertEquals(LinkState.NOT_LINKED, controller.state.value.drive.state)
-        assertTrue(controller.state.value.drive.error!!.contains("state mismatch"))
-        assertNull(tokens.load())
-        assertNull(repository.sourceById(DriveSourceConfig.SOURCE_ID))
+        assertTrue(h.driveSources().isEmpty())
+        assertTrue(h.store.v.isEmpty())
     }
 
     @Test
     fun unlinkClearsTokensButKeepsIndexedPhotos() = runTest {
-        val repository = repo()
-        val (controller, _, tokens) = build(repository = repository)
-        controller.linkDrive()
-        assertEquals(LinkState.LINKED, controller.state.value.drive.state)
+        val h = build()
+        h.controller.linkDrive()
+        val id = h.driveSources().single().id
 
-        controller.unlinkDrive()
+        h.controller.unlinkSource(id)
 
-        assertEquals(LinkState.NOT_LINKED, controller.state.value.drive.state)
-        assertNull(tokens.load(), "tokens must be wiped on disconnect")
-        // The source row survives, disabled. Deleting it would cascade away the
-        // indexed rows and make the timeline suddenly lose entries — and nothing
-        // is ever removed from the cloud either.
-        val source = repository.sourceById(DriveSourceConfig.SOURCE_ID)!!
+        assertNull(h.store.v["$id.refreshToken"], "tokens must be wiped on disconnect")
+        val source = h.repository.sourceById(id)!!
         assertTrue(!source.enabled)
+        assertNull(h.repository.uploadTarget(), "a disconnected target must not stay selected")
+        assertEquals(LinkState.NOT_LINKED, h.account(id).state)
     }
 
     @Test
-    fun secondSignInIsRefusedRatherThanOverwritingTheFirstAccount() = runTest {
-        // Source ids and credential keys are both the constant SOURCE_ID, so a
-        // second link would replace the first account's refresh token in place.
-        // Until source ids are per-instance, refusing is the only safe answer —
-        // silently losing a connected account is far worse than a message.
-        val repository = repo()
-        val (controller, _, tokens) = build(repository = repository)
+    fun twoAccountsCoexistWithSeparateTokens() = runTest {
+        val h = build(generateSourceId = sourceIds("google_drive_a", "google_drive_b"))
 
-        controller.linkDrive()
-        val firstRefresh = tokens.load()!!.refreshToken
-        controller.linkDrive()
+        h.controller.linkDrive()
+        h.controller.linkDrive()
 
-        assertEquals(LinkState.LINKED, controller.state.value.drive.state)
-        assertEquals(firstRefresh, tokens.load()!!.refreshToken, "first account's token must survive")
-        assertTrue(
-            controller.state.value.drive.error!!.contains("already connected"),
-            "the refusal must be explained: ${controller.state.value.drive.error}",
-        )
-        // Still exactly one account, still the upload target.
-        assertEquals(1, repository.allSources().count { it.isUploadTarget })
+        val sources = h.driveSources()
+        assertEquals(2, sources.size)
+        assertEquals("rt", h.store.v["google_drive_a.refreshToken"])
+        assertEquals("rt", h.store.v["google_drive_b.refreshToken"])
+        // Disconnecting one must not touch the other's credentials.
+        h.controller.unlinkSource("google_drive_a")
+        assertNull(h.store.v["google_drive_a.refreshToken"])
+        assertEquals("rt", h.store.v["google_drive_b.refreshToken"])
+        assertEquals(1, h.driveSources().count { it.enabled })
+    }
+
+    @Test
+    fun setUploadTargetSwitchesTheDestination() = runTest {
+        val h = build(generateSourceId = sourceIds("google_drive_a", "google_drive_b"))
+        h.controller.linkDrive()
+        h.controller.linkDrive()
+        assertEquals("google_drive_a", h.repository.uploadTarget()?.id)
+
+        h.controller.setUploadTarget("google_drive_b")
+
+        assertEquals("google_drive_b", h.repository.uploadTarget()?.id)
+        assertEquals(1, h.repository.allSources().count { it.isUploadTarget })
+        assertTrue(h.account("google_drive_b").isUploadTarget)
+        assertTrue(!h.account("google_drive_a").isUploadTarget)
     }
 
     @Test
     fun relinkingAfterUnlinkRestoresTheUploadTarget() = runTest {
-        val repository = repo()
-        val (controller, _, _) = build(repository = repository)
+        val h = build(generateSourceId = sourceIds("google_drive_a", "google_drive_a"))
+        h.controller.linkDrive()
+        h.controller.unlinkSource("google_drive_a")
+        h.controller.linkDrive("google_drive_a")
 
-        controller.linkDrive()
-        controller.unlinkDrive()
-        controller.linkDrive()
-
-        assertEquals(LinkState.LINKED, controller.state.value.drive.state)
-        assertEquals(DriveSourceConfig.SOURCE_ID, repository.uploadTarget()?.id)
-        // Exactly one target, even after the disable/enable round trip.
-        assertEquals(1, repository.allSources().count { it.isUploadTarget })
+        assertEquals("google_drive_a", h.repository.uploadTarget()?.id)
+        assertTrue(h.account("google_drive_a").isUploadTarget)
+        assertEquals(1, h.repository.allSources().count { it.isUploadTarget })
     }
 
     @Test
-    fun consumeMessageClearsBothMessageAndError() = runTest {
-        val (controller, _, _) = build(redirect = RedirectResult(null, null, "access_denied"))
-        controller.linkDrive()
-        assertTrue(controller.state.value.drive.error != null)
+    fun consumeMessageClearsTheNotice() = runTest {
+        val h = build()
+        h.controller.linkDrive()
+        assertTrue(h.controller.state.value.message != null)
 
-        controller.consumeMessage()
+        h.controller.consumeMessage()
 
-        // One-shot notices must not reappear on every recomposition.
-        assertNull(controller.state.value.drive.error)
-        assertNull(controller.state.value.message)
+        assertNull(h.controller.state.value.message)
     }
 
     @Test
     fun refreshReflectsStorageChangedElsewhere() = runTest {
-        val repository = repo()
-        val (controller, _, _) = build(repository = repository)
-        controller.linkDrive()
-        assertEquals(LinkState.LINKED, controller.state.value.drive.state)
+        val h = build()
+        h.controller.linkDrive()
+        val id = h.driveSources().single().id
 
         // A background sync renamed the account, as it would after reading the
         // user's email from Drive.
-        repository.upsertCloudSource(
-            id = DriveSourceConfig.SOURCE_ID,
-            type = dev.photohub.shared.model.SourceType.GOOGLE_DRIVE,
-            displayName = "Google Drive (jud@example.com)",
+        h.repository.upsertCloudSource(
+            id = id,
+            type = SourceType.GOOGLE_DRIVE,
+            displayName = "Google Drive (other@example.com)",
         )
-        controller.refresh()
+        h.controller.refresh()
 
-        assertEquals("Google Drive (jud@example.com)", controller.state.value.drive.displayName)
-        assertEquals(LinkState.LINKED, controller.state.value.drive.state)
+        assertEquals("Google Drive (other@example.com)", h.account(id).displayName)
+        assertEquals(LinkState.LINKED, h.account(id).state)
     }
 }

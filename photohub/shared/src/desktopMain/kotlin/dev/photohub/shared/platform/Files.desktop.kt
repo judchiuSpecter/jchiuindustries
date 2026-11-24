@@ -40,3 +40,23 @@ internal fun ByteArray.toHexString(): String {
         }
     }
 }
+
+/** Desktop references are always real paths, so this is a plain seek + read. */
+actual suspend fun readChunk(ref: String, offset: Long, length: Int): ByteArray? =
+    withContext(Dispatchers.IO) {
+        runCatching {
+            java.io.RandomAccessFile(java.io.File(ref), "r").use { file ->
+                file.seek(offset)
+                val buffer = ByteArray(length)
+                var filled = 0
+                while (filled < length) {
+                    val read = file.read(buffer, filled, length - filled)
+                    if (read <= 0) break
+                    filled += read
+                }
+                if (filled == length) buffer else buffer.copyOf(filled)
+            }
+        }.getOrNull()
+    }
+
+actual fun displayName(ref: String): String = java.io.File(ref).name

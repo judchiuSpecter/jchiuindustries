@@ -25,10 +25,32 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:configChanges="orientation|screenSize|keyboardHidden">
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:launchMode="singleTop">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!--
+                Captures Google's OAuth redirect. Android clients cannot use a
+                loopback socket the way desktop does, so Google requires the
+                reverse-DNS form of the client id as a custom scheme. Without
+                this filter the browser has nowhere to hand the authorization
+                code back to and sign-in hangs after consent.
+
+                The scheme must match AndroidRedirectCapture.redirectUriFor(),
+                which derives it from the client id at runtime. It is declared
+                literally here because a manifest cannot read configuration;
+                changing the Android OAuth client means changing this value.
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="com.googleusercontent.apps.901152469854-fn0oojtk2som4luru7btk6lkldoej43h"
+                    android:path="/oauth2redirect" />
             </intent-filter>
         </activity>
     </application>

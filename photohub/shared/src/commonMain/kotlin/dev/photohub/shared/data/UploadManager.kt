@@ -2,6 +2,7 @@ package dev.photohub.shared.data
 
 import dev.photohub.shared.auth.ReauthRequiredException
 import dev.photohub.shared.db.PhotoHubDatabase
+import dev.photohub.shared.platform.displayName
 import dev.photohub.shared.platform.fileSize
 import dev.photohub.shared.platform.fileSystem
 import dev.photohub.shared.platform.sha256OfFile
@@ -22,9 +23,15 @@ interface UploadTarget {
     /** Source id this target writes to, matching `Source.id`. */
     val sourceId: String
 
-    /** Uploads [local] into [remoteFolder]; returns the remote id. */
+    /**
+     * Uploads [local] into [remoteFolder]; returns the remote id.
+     *
+     * [local] is the opaque queue reference (a `content://` URI on Android), so
+     * implementations must read it through the platform file seam rather than
+     * okio.
+     */
     suspend fun upload(
-        local: Path,
+        local: String,
         remoteFolder: String,
         mimeType: String,
         onProgress: (Float) -> Unit,
@@ -64,10 +71,10 @@ class UploadManager(
      * @return true when newly queued, false when already present.
      */
     suspend fun enqueue(
-        local: Path,
+        local: String,
         targetSourceId: String,
         remoteFolder: String? = null,
-    ): Boolean = enqueueRef(local.toString(), targetSourceId, remoteFolder)
+    ): Boolean = enqueueRef(local, targetSourceId, remoteFolder)
 
     /**
      * Queues a media reference, which on Android may be a `content://` URI
@@ -121,8 +128,6 @@ class UploadManager(
         var completed = 0
 
         for (item in pending) {
-            val local = toPath(item.localPath)
-
             // The user may have deleted the photo after it was queued. Checked
             // through the platform rather than okio, since on Android the
             // reference is usually a content URI that okio cannot resolve.
@@ -144,11 +149,12 @@ class UploadManager(
             db.uploadQueueQueries.markRunning(item.id)
 
             val folder = item.targetRemotePath
-                ?: remoteFolderFor(item.queuedAt, local, DEFAULT_ROOT)
-            val mime = MediaTypes.mimeTypeOf(local.name) ?: "application/octet-stream"
+                ?: remoteFolderFor(item.queuedAt, item.localPath, DEFAULT_ROOT)
+            val mime = MediaTypes.mimeTypeOf(displayName(item.localPath))
+                ?: "application/octet-stream"
 
             val result = runCatching {
-                target.upload(local, folder, mime) { p -> onProgress(completed, pending.size, p) }
+                target.upload(item.localPath, folder, mime) { p -> onProgress(completed, pending.size, p) }
             }
 
             result.fold(
@@ -203,7 +209,7 @@ class UploadManager(
      */
     internal fun remoteFolderFor(
         epochMs: Long,
-        local: Path,
+        local: String,
         root: String,
         zone: TimeZone = TimeZone.currentSystemDefault(),
     ): String {
@@ -211,8 +217,10 @@ class UploadManager(
             epochMs
         } else {
             // Fall back to the file's own mtime before giving up on a date.
-            runCatching { fileSystem.metadata(local).lastModifiedAtMillis }.getOrNull()
-                ?: now()
+            // Only a real path has an mtime available here; a content URI
+            // falls through to "now", which is correct enough for foldering.
+            runCatching { fileSystem.metadata(toPath(local)).lastModifiedAtMillis }
+                .getOrNull() ?: now()
         }
         val dt = Instant.fromEpochMilliseconds(source).toLocalDateTime(zone)
         val month = dt.monthNumber.toString().padStart(2, '0')

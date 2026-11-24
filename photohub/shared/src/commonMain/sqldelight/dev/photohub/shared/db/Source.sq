@@ -39,6 +39,10 @@ ON CONFLICT(id) DO UPDATE SET
 clearAllUploadTargets:
 UPDATE Source SET isUploadTarget = 0;
 
+-- Clears only one source, used when the current target is disconnected.
+clearUploadTarget:
+UPDATE Source SET isUploadTarget = 0 WHERE id = ?;
+
 setLastSynced:
 UPDATE Source SET lastSyncedAt = ? WHERE id = ?;
 

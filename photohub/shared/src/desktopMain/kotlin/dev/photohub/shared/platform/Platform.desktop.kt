@@ -82,6 +82,14 @@ actual class BackgroundScheduler {
         }
     }
 
+    /**
+     * No-op on desktop: camera upload exists to get photos off a phone's camera
+     * roll, and a desktop has no camera roll to watch.
+     */
+    actual fun setCameraUploadEnabled(enabled: Boolean) = Unit
+
+    actual fun requestUploadNow() = Unit
+
     actual fun cancelAll() {
         executor?.shutdownNow()
         executor = null

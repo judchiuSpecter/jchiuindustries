@@ -1,6 +1,7 @@
 package dev.photohub.android
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -15,7 +16,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
+import dev.photohub.shared.auth.AndroidRedirectCapture
 import dev.photohub.shared.data.AccountsController
+import dev.photohub.shared.data.SettingsStore
 import dev.photohub.shared.data.TimelineController
 import dev.photohub.shared.ui.App
 import org.koin.android.ext.android.inject
@@ -23,10 +26,17 @@ import org.koin.android.ext.android.inject
 class MainActivity : ComponentActivity() {
     private val controller: TimelineController by inject()
     private val accounts: AccountsController by inject()
+    private val redirectCapture: AndroidRedirectCapture by inject()
+    private val settings: SettingsStore by inject()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // The activity is `singleTop`-less, so a redirect that arrives while the
+        // activity is alive comes through onNewIntent, and one that arrives
+        // after it was destroyed comes through here.
+        handleOAuthRedirect(intent)
 
         setContent {
             // MediaStore returns nothing without the read-media permission, so the
@@ -41,8 +51,37 @@ class MainActivity : ComponentActivity() {
                 if (!granted) request.launch(requiredPermissions())
             }
 
-            App(controller = controller, accounts = accounts, refreshOnStart = granted)
+            App(
+                controller = controller,
+                accounts = accounts,
+                refreshOnStart = granted,
+                settings = settings,
+            )
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleOAuthRedirect(intent)
+    }
+
+    /**
+     * Hands an OAuth redirect to the coroutine waiting inside the sign-in flow.
+     *
+     * Google sends the authorization code to a custom scheme registered in the
+     * manifest; the system routes it here as a VIEW intent. Anything else (the
+     * launcher intent, a share) is ignored.
+     */
+    private fun handleOAuthRedirect(intent: Intent?) {
+        val data = intent?.data ?: return
+        if (!data.path.orEmpty().startsWith("/oauth2redirect")) return
+
+        redirectCapture.onRedirect(
+            code = data.getQueryParameter("code"),
+            state = data.getQueryParameter("state"),
+            error = data.getQueryParameter("error"),
+        )
     }
 
     private fun hasMediaPermission(): Boolean =

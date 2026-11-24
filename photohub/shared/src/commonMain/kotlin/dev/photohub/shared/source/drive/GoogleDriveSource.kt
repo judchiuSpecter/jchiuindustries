@@ -51,11 +51,18 @@ class GoogleDriveSource(
     override val canUpload: Boolean get() = true
 
     override suspend fun list(cursor: String?): Result<MediaPage> = runCatching {
-        // Resolving by name on first use lets a fresh install find an existing
-        // PhotoHub folder from another device instead of making a second one.
-        val rootId = settings.rootFolderId ?: api.ensureFolderPath(settings.rootFolderName)
-
-        val page = api.listMedia(folderId = rootId, pageToken = cursor)
+        // Deliberately unscoped by folder. Drive's `'<id>' in parents` matches
+        // only *direct* children, and uploads are filed into
+        // `PhotoHub/YYYY/MM`, so scoping to the root folder returned nothing
+        // and every uploaded photo stayed invisible to the timeline.
+        //
+        // Listing without a parent filter is safe and correct here precisely
+        // because the grant is `drive.file`: the app can only ever see files it
+        // created itself, so this is "PhotoHub's own media at any depth" rather
+        // than the user's whole Drive. Re-introducing a folder filter would
+        // require either a recursive walk of the year/month tree or tracking
+        // folder ids, both of which buy nothing under this scope.
+        val page = api.listMedia(folderId = null, pageToken = cursor)
         MediaPage(
             items = page.files.map { it.toRemoteMedia() },
             nextCursor = page.nextPageToken,

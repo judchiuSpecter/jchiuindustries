@@ -165,7 +165,12 @@ credentials. Supply your own:
    the same `"installed"` wrapper, so the wrapper tells you nothing.
 
    - **Desktop app** for the desktop build. No extra input needed.
-   - **Android** for the phone build: package name `dev.photohub.android` plus
+   - **Android** for the phone build — after creating it, open the client and
+     under **Advanced Settings** enable **"Enable custom URI scheme"**, then
+     save. Google disables this by default and the console warns against it,
+     but without it every sign-in attempt is refused with *"Access blocked …
+     Custom URI scheme is not enabled for your Android client"*. Changes take a
+     few minutes to propagate. Needs package name `dev.photohub.android` plus
      the debug keystore's SHA-1 fingerprint:
 
      ```bash
@@ -211,13 +216,29 @@ Notes on the choices here:
 - **In Testing mode Google expires refresh tokens after 7 days**, so you will
   re-link weekly until the consent screen is published.
 
+### Sign-in troubleshooting
+
+Both failures below happen *before* any consent screen appears, so they are
+configuration, not code.
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `Error 400: invalid_request` on desktop, no consent screen | A **Desktop app** client is required; an Android client rejects the `http://127.0.0.1:<port>` loopback redirect | Create a Desktop app client and put *its* id in `google-oauth.json` |
+| **Access blocked** → *"Custom URI scheme is not enabled for your Android client"* | Google disables custom URI schemes on new Android clients by default | Client → **Advanced Settings** → enable **custom URI scheme**, save, wait a few minutes |
+| Consent succeeds, then "could not exchange the code" | Desktop clients must send `client_secret` on token exchange **even with PKCE** | Add `"clientSecret"` to `google-oauth.json` |
+| Browser opens, app waits forever (Android) | Missing redirect `intent-filter`, or the activity is not `singleTop` | Both are in `AndroidManifest.xml`; the scheme must match the Android client id |
+
+The Android redirect scheme is declared literally in `AndroidManifest.xml`
+because a manifest cannot read runtime configuration. Changing the Android OAuth
+client means editing that scheme to match.
+
 ## Milestone status
 
 | Milestone | Scope | Status |
 |---|---|---|
 | **M1** | KMP scaffold, SQLDelight schema, `expect`/`actual` stubs, both apps compile with empty timeline | **done — verified on device** |
 | **M2** | Local source: MediaStore (Android) + directory walk (desktop), date-grouped grid, thumbnails | **done — 1,212 items indexed on a Galaxy S21+, 22 on desktop** |
-| **M3** | Google Drive source + camera-upload pipeline | **core built & unit-tested; needs your OAuth client ID + a UI to trigger sign-in** |
+| **M3** | Google Drive source + camera-upload pipeline | **desktop verified end-to-end: real sign-in, upload, and index against a live Drive account. Phone sign-in pending a console toggle** |
 | **M4** | MEGA source | not started — approach decided, see "MEGA decision" |
 | **M5** | OneDrive source | not started |
 | **M6** | Takeout import, NAS archive source, installers, polish | not started |

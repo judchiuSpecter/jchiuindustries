@@ -9,6 +9,7 @@ import dev.photohub.shared.auth.DesktopCredentialStore
 import dev.photohub.shared.auth.DesktopRedirectCapture
 import dev.photohub.shared.auth.RedirectCapture
 import dev.photohub.shared.data.AccountsController
+import dev.photohub.shared.data.SettingsStore
 import dev.photohub.shared.data.TimelineController
 import dev.photohub.shared.di.initKoin
 import dev.photohub.shared.platform.appDataDirFile
@@ -31,6 +32,7 @@ fun main() {
     val koin = GlobalContext.get()
     val controller = koin.get<TimelineController>()
     val accounts = koin.get<AccountsController>()
+    val settings = koin.get<SettingsStore>()
 
     application {
         Window(
@@ -39,7 +41,12 @@ fun main() {
             state = rememberWindowState(width = 1100.dp, height = 800.dp),
         ) {
             // Desktop has no permission gate, so scan on launch.
-            App(controller = controller, accounts = accounts, refreshOnStart = true)
+            App(
+                    controller = controller,
+                    accounts = accounts,
+                    refreshOnStart = true,
+                    settings = settings,
+                )
         }
     }
 }

@@ -2,7 +2,6 @@ package dev.photohub.shared.data
 
 import dev.photohub.shared.db.PhotoHubDatabase
 import dev.photohub.shared.model.SourceType
-import okio.Path.Companion.toPath
 
 /**
  * Finds indexed local photos that have not been queued for upload yet.
@@ -71,7 +70,7 @@ class CameraUploadScanner(
                     // upload happens, so a backlog still files by the right month.
                     remoteFolder = uploads.remoteFolderFor(
                         epochMs = candidate.dateTaken,
-                        local = ref.toPath(),
+                        local = ref,
                         root = UploadManager.DEFAULT_ROOT,
                     ),
                 )

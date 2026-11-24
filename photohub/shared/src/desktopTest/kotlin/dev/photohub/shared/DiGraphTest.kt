@@ -1,16 +1,19 @@
 package dev.photohub.shared
 
 import dev.photohub.shared.auth.CredentialStore
-import dev.photohub.shared.auth.DriveLinkCoordinator
+import dev.photohub.shared.auth.DriveAccountFactory
 import dev.photohub.shared.auth.GoogleOAuthClient
 import dev.photohub.shared.auth.RedirectCapture
 import dev.photohub.shared.auth.RedirectResult
-import dev.photohub.shared.auth.TokenProvider
+import dev.photohub.shared.data.AccountsController
+import dev.photohub.shared.data.CurrentUploadTarget
+import dev.photohub.shared.data.SettingsStore
 import dev.photohub.shared.data.TimelineController
 import dev.photohub.shared.data.UploadManager
+import dev.photohub.shared.data.UploadTarget
 import dev.photohub.shared.di.sharedModule
-import dev.photohub.shared.source.drive.DriveApi
-import dev.photohub.shared.source.drive.DriveUploader
+import dev.photohub.shared.source.SourceRegistry
+import io.ktor.client.HttpClient
 import org.koin.core.context.stopKoin
 import org.koin.dsl.koinApplication
 import org.koin.dsl.module
@@ -59,26 +62,30 @@ class DiGraphTest {
 
         // What MainActivity / Main.kt pull out directly.
         assertNotNull(koin.get<TimelineController>())
-        assertNotNull(koin.get<DriveLinkCoordinator>())
+        assertNotNull(koin.get<SettingsStore>())
         assertNotNull(koin.get<UploadManager>())
-        assertNotNull(koin.get<dev.photohub.shared.data.AccountsController>())
+        assertNotNull(koin.get<AccountsController>())
 
-        // The Drive chain, where a missing binding would only surface on the
-        // first upload attempt.
-        assertNotNull(koin.get<DriveApi>())
-        assertNotNull(koin.get<DriveUploader>())
-        assertNotNull(koin.get<TokenProvider>())
+        // The per-account Drive chain is built by the factory rather than being
+        // a direct binding; with no account linked there is nothing to build yet.
+        assertNotNull(koin.get<DriveAccountFactory>())
+        assertNotNull(koin.get<SourceRegistry>())
         assertNotNull(koin.get<GoogleOAuthClient>())
+
+        // The upload target resolves lazily, so it must not require a linked
+        // account just to be injected.
+        assertNotNull(koin.get<UploadTarget>())
     }
 
     @Test
     fun singletonsAreSharedRatherThanRebuiltPerInjection() {
         val koin = koinApplication { modules(sharedModule, platformModule) }.koin
 
-        // TokenProvider must be a singleton or its single-flight refresh mutex
-        // would be per-instance and stop coordinating anything.
-        assert(koin.get<TokenProvider>() === koin.get<TokenProvider>())
+        // The factory caches one graph per source id; two factory instances would
+        // create two refresh mutexes for the same account.
+        assert(koin.get<DriveAccountFactory>() === koin.get<DriveAccountFactory>())
         // One HTTP client, so connections are pooled across sources.
-        assert(koin.get<io.ktor.client.HttpClient>() === koin.get<io.ktor.client.HttpClient>())
+        assert(koin.get<HttpClient>() === koin.get<HttpClient>())
+        assert(koin.get<CurrentUploadTarget>() === koin.get<CurrentUploadTarget>())
     }
 }

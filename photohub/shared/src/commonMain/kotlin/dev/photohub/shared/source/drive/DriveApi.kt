@@ -56,6 +56,16 @@ data class DriveFileList(
     val nextPageToken: String? = null,
 )
 
+/** Minimal `about` projection, used to label a connected account with its email. */
+@Serializable
+data class DriveAbout(val user: User? = null) {
+    @Serializable
+    data class User(
+        val emailAddress: String? = null,
+        val displayName: String? = null,
+    )
+}
+
 /** Raised for Drive responses that are worth distinguishing from generic failures. */
 class DriveApiException(
     val status: Int,
@@ -213,6 +223,16 @@ class DriveApi(
                 "Drive did not return a resumable session URL",
                 retryable = true,
             )
+    }
+
+    /**
+     * Fetches the signed-in user's identity so a second account can be labelled
+     * meaningfully in the sources list. Never fatal: a label is a convenience,
+     * not a precondition for a working source.
+     */
+    suspend fun about(): Result<DriveAbout> = runCatching {
+        val url = "$baseUrl/about?fields=${"user(emailAddress,displayName)".urlEncode()}"
+        json.decodeFromString(authorizedGet(url).requireSuccess("read account"))
     }
 
     private suspend fun authorizedGet(url: String): HttpResponse =

@@ -1,5 +1,6 @@
 package dev.photohub.shared.ui
 
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -23,7 +24,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import dev.photohub.shared.data.AccountsController
+import dev.photohub.shared.data.SettingsStore
 import dev.photohub.shared.data.TimelineController
+import dev.photohub.shared.db.MediaItem
 import kotlinx.coroutines.launch
 
 /** The two screens PhotoHub has. Kept as an enum — a nav library would be overkill. */
@@ -45,6 +48,7 @@ fun App(
     controller: TimelineController,
     accounts: AccountsController? = null,
     refreshOnStart: Boolean = true,
+    settings: SettingsStore = SettingsStore(),
 ) {
     val state by controller.state.collectAsState()
     val scope = rememberCoroutineScope()
@@ -52,10 +56,19 @@ fun App(
 
     LaunchedEffect(refreshOnStart) {
         controller.loadCached()
+        // Re-arm camera upload if an account is already linked. WorkManager
+        // schedules survive restarts but not a reinstall, and a user who linked
+        // in an earlier build never got one.
+        accounts?.syncBackgroundWork()
         if (refreshOnStart) controller.refresh()
     }
 
-    MaterialTheme {
+    val prefs by settings.settings.collectAsState()
+
+    /** Item being shown full-screen, or null when on the timeline grid. */
+    var selectedItem by remember { mutableStateOf<MediaItem?>(null) }
+
+    PhotoHubTheme(mode = prefs.themeMode) {
         Scaffold(
             topBar = {
                 TopAppBar(
@@ -96,26 +109,42 @@ fun App(
             },
             modifier = Modifier.fillMaxSize(),
         ) { inner ->
-            Column(Modifier.fillMaxSize().padding(inner)) {
-                when (screen) {
-                    Screen.TIMELINE -> {
-                        state.error?.let { message ->
-                            Text(
-                                text = message,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.error,
-                                modifier = Modifier.fillMaxWidth().padding(8.dp),
+            Box(Modifier.fillMaxSize().padding(inner)) {
+                Column(Modifier.fillMaxSize()) {
+                    when (screen) {
+                        Screen.TIMELINE -> {
+                            state.error?.let { message ->
+                                Text(
+                                    text = message,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.fillMaxWidth().padding(8.dp),
+                                )
+                            }
+                            TimelineScreen(
+                                items = state.items,
+                                modifier = Modifier.fillMaxSize(),
+                                onItemClick = { selectedItem = it },
                             )
                         }
-                        TimelineScreen(
-                            items = state.items,
-                            modifier = Modifier.fillMaxSize(),
-                        )
-                    }
 
-                    Screen.ACCOUNTS -> accounts?.let {
-                        AccountsScreen(controller = it, modifier = Modifier.fillMaxSize())
+                        Screen.ACCOUNTS -> accounts?.let {
+                            AccountsScreen(
+                                controller = it,
+                                themeMode = prefs.themeMode,
+                                onThemeModeChange = settings::setThemeMode,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
                     }
+                }
+
+                // Fullscreen photo viewer overlay
+                if (selectedItem != null) {
+                    FullscreenPhotoViewer(
+                        item = selectedItem!!,
+                        onDismiss = { selectedItem = null }
+                    )
                 }
             }
         }

@@ -1,16 +1,22 @@
 package dev.photohub.shared.data
 
+import dev.photohub.shared.auth.DriveAccountFactory
 import dev.photohub.shared.auth.DriveLinkCoordinator
 import dev.photohub.shared.auth.GoogleOAuthConfig
 import dev.photohub.shared.auth.OAuthConfigLoader
 import dev.photohub.shared.model.SourceType
+import dev.photohub.shared.platform.BackgroundScheduler
 import dev.photohub.shared.source.drive.DriveSourceConfig
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlin.random.Random
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 
 /**
- * Drives the accounts screen: which clouds are connected, and linking/unlinking.
+ * Drives the sources screen: every configured source instance, plus linking,
+ * disconnecting and picking which cloud receives camera uploads.
  *
  * The "not configured" state is modelled explicitly rather than treated as an
  * error. A fresh install has no OAuth client id, and that is a setup step the
@@ -19,139 +25,255 @@ import kotlinx.coroutines.flow.asStateFlow
  */
 class AccountsController(
     private val repository: MediaRepository,
-    private val driveLink: DriveLinkCoordinator,
+    private val drives: DriveAccountFactory,
     private val oauthConfig: GoogleOAuthConfig,
+    private val scheduler: BackgroundScheduler = BackgroundScheduler(),
+    /** Overridable so tests can use predictable ids. */
+    private val generateSourceId: () -> String = { newDriveSourceId() },
 ) {
-    /** Connection state of one cloud account. */
     enum class LinkState {
         /** No OAuth client id supplied yet; the user must do setup first. */
         NOT_CONFIGURED,
         NOT_LINKED,
         LINKING,
         LINKED,
+        /** A source row for a provider that has no implementation yet. */
+        UNSUPPORTED,
     }
 
-    data class DriveAccount(
+    /** One configured source instance as the screen renders it. */
+    data class SourceAccount(
+        val id: String,
+        val type: SourceType,
+        val displayName: String,
         val state: LinkState,
-        val displayName: String = "Google Drive",
+        val canUpload: Boolean = false,
         val isUploadTarget: Boolean = false,
         val error: String? = null,
-        /** Where to put `google-oauth.json`, shown when NOT_CONFIGURED. */
-        val setupPath: String = OAuthConfigLoader.expectedPath(),
     )
 
     data class State(
-        val drive: DriveAccount,
-        /** Set after a successful link so the UI can confirm it. */
+        val sources: List<SourceAccount> = emptyList(),
+        /** Set after a successful action so the UI can confirm it. */
         val message: String? = null,
+        val oauthConfigured: Boolean = true,
+        /** Where to put `google-oauth.json`, shown when OAuth is not configured. */
+        val setupPath: String = OAuthConfigLoader.expectedPath(),
     )
 
-    private val _state = MutableStateFlow(State(drive = currentDrive()))
+    /** Transient UI detail kept outside [State] so a storage refresh cannot lose it. */
+    private var linkingId: String? = null
+    private val errors = mutableMapOf<String, String>()
+    private var message: String? = null
+
+    private val _state = MutableStateFlow(buildState())
     val state: StateFlow<State> = _state.asStateFlow()
 
     /** Recomputes from storage; call when the screen is shown. */
     fun refresh() {
-        _state.value = State(drive = currentDrive())
+        _state.value = buildState()
     }
 
     /**
-     * Runs the Google sign-in flow.
+     * Re-arms background upload at app start when an account is linked.
      *
-     * On success the Drive source row is created and made the camera-upload
-     * target, since connecting a cloud is only useful if photos go to it.
+     * WorkManager schedules survive restarts, but not an app reinstall or a
+     * "clear data", and a user who linked in an older build never got the
+     * schedule at all. Re-asserting it is cheap: the periodic request uses KEEP,
+     * so an existing schedule is left alone rather than restarted.
      */
-    suspend fun linkDrive() {
+    fun syncBackgroundWork() {
+        scheduler.setCameraUploadEnabled(repository.uploadTarget()?.enabled == true)
+    }
+
+    /** Explicit "upload now", for when the user does not want to wait. */
+    fun uploadNow() = scheduler.requestUploadNow()
+
+    /**
+     * Runs the Google sign-in flow for a new or previously disconnected source.
+     *
+     * Passing no id creates a new instance with its own credential namespace;
+     * passing an existing id re-links that account. On success the source row
+     * is created (or re-enabled) and, if it is the first cloud, made the camera
+     * upload target.
+     */
+    suspend fun linkDrive(sourceId: String? = null) {
         if (!oauthConfig.isConfigured) {
-            _state.value = State(
-                drive = currentDrive().copy(
-                    state = LinkState.NOT_CONFIGURED,
-                    error = "No Google OAuth client ID found. See README → Connecting Google Drive.",
-                ),
-            )
+            errors[sourceId ?: DriveSourceConfig.SOURCE_ID] =
+                "No Google OAuth client ID found. See README → Connecting Google Drive."
+            publish()
             return
         }
 
-        // Only one Google account is supported today: the source row id and the
-        // credential-store key namespace are both the constant
-        // DriveSourceConfig.SOURCE_ID, so a second sign-in would overwrite the
-        // first account's refresh token and its Source row in place — losing an
-        // account silently. Refuse instead. Multi-account needs per-instance
-        // source ids; see DESIGN.md "Multiple cloud accounts".
-        if (driveLink.isLinked()) {
-            _state.value = State(
-                drive = currentDrive().copy(
-                    error = "A Google account is already connected. " +
-                        "Disconnect it first — PhotoHub cannot hold two Google accounts yet.",
-                ),
-            )
-            return
-        }
+        val id = sourceId ?: generateSourceId()
+        linkingId = id
+        errors.remove(id)
+        publish()
 
-        _state.value = State(drive = currentDrive().copy(state = LinkState.LINKING))
-
-        when (val outcome = driveLink.link()) {
+        val account = drives.forSource(id)
+        when (val outcome = account.link.link()) {
             is DriveLinkCoordinator.Outcome.Success -> {
+                linkingId = null
+
+                // A label is a convenience, not a precondition: if `about`
+                // fails (offline, tightened scope), the source still works.
+                val email = account.api.about().getOrNull()?.user?.emailAddress
+                    ?.takeIf { it.isNotBlank() }
+                val displayName = if (email != null) "Google Drive ($email)" else "Google Drive"
+
+                val existing = repository.sourceById(id)
+                val previousConfig = existing?.configJson?.let { json ->
+                    runCatching { Json.decodeFromString<DriveSourceConfig>(json) }.getOrNull()
+                }
+                val config = (previousConfig ?: DriveSourceConfig()).copy(accountEmail = email)
+
+                // Take the upload slot when there is no target yet (first link,
+                // or a re-link after disconnecting the old target). Never steal
+                // it from a different cloud the user explicitly chose.
+                val currentTargetId = repository.uploadTarget()?.id
+                val makeTarget = existing?.isUploadTarget == true ||
+                    currentTargetId == null ||
+                    currentTargetId == id
+
                 repository.upsertCloudSource(
-                    id = DriveSourceConfig.SOURCE_ID,
+                    id = id,
                     type = SourceType.GOOGLE_DRIVE,
-                    displayName = "Google Drive",
-                    makeUploadTarget = true,
+                    displayName = displayName,
+                    configJson = Json.encodeToString(config),
+                    enabled = true,
+                    makeUploadTarget = makeTarget,
                 )
-                _state.value = State(
-                    drive = currentDrive(),
-                    message = "Google Drive connected. New photos will upload here.",
-                )
+                scheduler.setCameraUploadEnabled(true)
+                message = "$displayName connected. New photos will be copied to it."
+                publish()
             }
 
             is DriveLinkCoordinator.Outcome.Failed -> {
-                _state.value = State(
-                    drive = currentDrive().copy(error = outcome.reason),
-                )
+                linkingId = null
+                errors[id] = outcome.reason
+                publish()
             }
         }
     }
 
     /**
-     * Disconnects Drive.
-     *
-     * Tokens are cleared and the source is disabled, but its indexed rows are
-     * kept so the timeline does not suddenly lose entries — and nothing is ever
-     * deleted from the cloud itself.
+     * Disconnects one source: tokens are cleared and the row is disabled, but
+     * its indexed rows are kept so the timeline does not suddenly lose entries.
+     * Nothing is ever deleted from the cloud itself.
      */
-    fun unlinkDrive() {
-        driveLink.unlink()
-        repository.sourceById(DriveSourceConfig.SOURCE_ID)?.let {
-            repository.upsertCloudSource(
-                id = it.id,
-                type = it.type,
-                displayName = it.displayName,
-                configJson = it.configJson,
-                enabled = false,
-            )
-        }
-        _state.value = State(drive = currentDrive(), message = "Google Drive disconnected.")
+    suspend fun unlinkSource(id: String) {
+        val source = repository.sourceById(id) ?: return
+        if (source.type != SourceType.GOOGLE_DRIVE) return
+
+        drives.forSource(id).tokens.unlink()
+        repository.upsertCloudSource(
+            id = id,
+            type = source.type,
+            displayName = source.displayName,
+            configJson = source.configJson,
+            enabled = false,
+        )
+        if (source.isUploadTarget) repository.clearUploadTarget(id)
+        updateScheduler()
+
+        message = "${source.displayName} disconnected."
+        errors.remove(id)
+        publish()
+    }
+
+    /** Makes this cloud the destination for new camera photos. Exactly one may be. */
+    fun setUploadTarget(id: String) {
+        val source = repository.sourceById(id) ?: return
+        if (source.type != SourceType.GOOGLE_DRIVE || !source.enabled) return
+
+        repository.upsertCloudSource(
+            id = id,
+            type = source.type,
+            displayName = source.displayName,
+            configJson = source.configJson,
+            enabled = source.enabled,
+            makeUploadTarget = true,
+        )
+        scheduler.setCameraUploadEnabled(true)
+        message = "Camera uploads now go to ${source.displayName}."
+        publish()
     }
 
     /** Clears a one-shot message or error after the UI has shown it. */
     fun consumeMessage() {
-        _state.value = _state.value.copy(
-            message = null,
-            drive = _state.value.drive.copy(error = null),
+        message = null
+        errors.clear()
+        publish()
+    }
+
+    private fun updateScheduler() {
+        scheduler.setCameraUploadEnabled(repository.uploadTarget()?.enabled == true)
+    }
+
+    private fun publish() {
+        _state.value = buildState()
+    }
+
+    private fun buildState(): State {
+        val configured = repository.allSources()
+        val rows = configured.map { source ->
+            val linked = when (source.type) {
+                SourceType.GOOGLE_DRIVE -> drives.isLinked(source.id)
+                // The device source is always available; unsupported types never
+                // reach this point through the UI but render honestly if present.
+                SourceType.LOCAL -> true
+                else -> false
+            }
+            SourceAccount(
+                id = source.id,
+                type = source.type,
+                displayName = source.displayName,
+                state = when {
+                    source.type != SourceType.LOCAL && source.type != SourceType.GOOGLE_DRIVE -> LinkState.UNSUPPORTED
+                    !oauthConfig.isConfigured && source.type == SourceType.GOOGLE_DRIVE -> LinkState.NOT_CONFIGURED
+                    source.id == linkingId -> LinkState.LINKING
+                    linked && source.enabled -> LinkState.LINKED
+                    else -> LinkState.NOT_LINKED
+                },
+                canUpload = source.type == SourceType.GOOGLE_DRIVE,
+                isUploadTarget = source.isUploadTarget,
+                error = errors[source.id],
+            )
+        }.toMutableList()
+
+        // A first-time link that failed has no Source row, but its error still
+        // needs a card to live on — otherwise the "+" flow fails silently.
+        for ((id, error) in errors) {
+            if (configured.none { it.id == id }) {
+                rows += SourceAccount(
+                    id = id,
+                    type = SourceType.GOOGLE_DRIVE,
+                    displayName = "Google Drive",
+                    state = if (oauthConfig.isConfigured) LinkState.NOT_LINKED else LinkState.NOT_CONFIGURED,
+                    canUpload = true,
+                    error = error,
+                )
+            }
+        }
+
+        return State(
+            sources = rows,
+            message = message,
+            oauthConfigured = oauthConfig.isConfigured,
         )
     }
 
-    private fun currentDrive(): DriveAccount {
-        val source = repository.sourceById(DriveSourceConfig.SOURCE_ID)
-        val linked = driveLink.isLinked() && source?.enabled == true
-
-        return DriveAccount(
-            state = when {
-                !oauthConfig.isConfigured -> LinkState.NOT_CONFIGURED
-                linked -> LinkState.LINKED
-                else -> LinkState.NOT_LINKED
-            },
-            displayName = source?.displayName ?: "Google Drive",
-            isUploadTarget = source?.isUploadTarget == true,
-        )
+    companion object {
+        /**
+         * Instance ids must be unique per account. The legacy single-account id is
+         * kept as the prefix so existing installs keep their credential keys and
+         * Source row, with no migration.
+         */
+        private fun newDriveSourceId(): String {
+            val suffix = Random.nextBytes(4).joinToString("") { byte ->
+                (byte.toInt() and 0xff).toString(16).padStart(2, '0')
+            }
+            return "${DriveSourceConfig.SOURCE_ID}_$suffix"
+        }
     }
 }

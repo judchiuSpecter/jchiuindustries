@@ -1,7 +1,9 @@
 package dev.photohub.shared.source.drive
 
 import dev.photohub.shared.auth.TokenProvider
-import dev.photohub.shared.platform.fileSystem
+import dev.photohub.shared.platform.displayName
+import dev.photohub.shared.platform.fileSize
+import dev.photohub.shared.platform.readChunk
 import io.ktor.client.HttpClient
 import io.ktor.client.request.header
 import io.ktor.client.request.put
@@ -32,19 +34,24 @@ class DriveUploader(
     /**
      * Uploads [local] into [remoteFolderPath], creating the folders if needed.
      *
+     * [local] is an opaque reference, not a filesystem path: on Android it is
+     * normally a `content://` MediaStore URI. It must not be converted to an
+     * okio `Path`, which rewrites `content://` to `content:/` and then cannot
+     * open it — the bug that left every queued camera photo failing with
+     * "no such file".
+     *
      * [onProgress] receives 0f..1f. Returns the created [DriveFile].
      */
     suspend fun upload(
-        local: Path,
+        local: String,
         remoteFolderPath: String,
         mimeType: String,
         onProgress: (Float) -> Unit = {},
     ): DriveFile {
-        val metadata = fileSystem.metadata(local)
-        val total = metadata.size ?: error("Cannot determine size of $local")
+        val total = fileSize(local) ?: error("Cannot determine size of $local")
 
         val folderId = api.ensureFolderPath(remoteFolderPath)
-        val sessionUrl = api.startResumableUpload(local.name, folderId, mimeType)
+        val sessionUrl = api.startResumableUpload(displayName(local), folderId, mimeType)
 
         return uploadChunks(sessionUrl, local, total, onProgress)
     }
@@ -59,7 +66,7 @@ class DriveUploader(
      */
     private suspend fun uploadChunks(
         sessionUrl: String,
-        local: Path,
+        local: String,
         total: Long,
         onProgress: (Float) -> Unit,
     ): DriveFile {
@@ -70,6 +77,7 @@ class DriveUploader(
             val remaining = total - offset
             val chunkSize = minOf(CHUNK_SIZE.toLong(), remaining).toInt()
             val chunk = readChunk(local, offset, chunkSize)
+                ?: error("Could not read $chunkSize bytes at $offset from $local")
 
             val response = http.put(sessionUrl) {
                 header("Authorization", "Bearer ${tokens.accessToken()}")
@@ -116,26 +124,6 @@ class DriveUploader(
                 )
             }
         }
-    }
-
-    /**
-     * Reads [length] bytes starting at [offset].
-     *
-     * Only one chunk is held in memory at a time, so a 4 GB video uses the same
-     * memory as a 2 MB photo.
-     */
-    private fun readChunk(path: Path, offset: Long, length: Int): ByteArray {
-        val buffer = ByteArray(length)
-        fileSystem.openReadOnly(path).use { handle ->
-            var read = 0
-            while (read < length) {
-                val n = handle.read(offset + read, buffer, read, length - read)
-                if (n <= 0) break
-                read += n
-            }
-            if (read < length) error("Short read on $path at $offset: $read of $length")
-        }
-        return buffer
     }
 
     private companion object {

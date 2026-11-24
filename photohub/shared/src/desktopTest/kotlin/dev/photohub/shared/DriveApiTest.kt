@@ -201,6 +201,34 @@ class DriveSourceTest {
     }
 
     @Test
+    fun listingIsNotScopedToTheRootFolderBecauseDriveParentsIsNotRecursive() = runTest {
+        // Verified against the live API: `'<id>' in parents` matches only direct
+        // children. Uploads are filed into PhotoHub/YYYY/MM, so a root-scoped
+        // query returned zero files and uploaded photos never reached the
+        // timeline. Under `drive.file` the app only sees its own files, so an
+        // unscoped listing is already limited to PhotoHub's media.
+        var requestedUrl = ""
+        val client = HttpClient(
+            MockEngine { request ->
+                requestedUrl = request.url.toString()
+                respond(
+                    ByteReadChannel("""{"files":[]}"""),
+                    HttpStatusCode.OK,
+                    headersOf(HttpHeaders.ContentType, "application/json"),
+                )
+            },
+        )
+
+        source(client).list(null).getOrThrow()
+
+        assertTrue(
+            !requestedUrl.contains("in+parents") && !requestedUrl.contains("in%20parents"),
+            "listing must not filter by parent folder: $requestedUrl",
+        )
+        assertTrue(requestedUrl.contains("trashed"), "query should still exclude trashed: $requestedUrl")
+    }
+
+    @Test
     fun mapsDriveFilesToRemoteMediaWithExifTimePreferred() = runTest {
         val body = """
             {"files":[

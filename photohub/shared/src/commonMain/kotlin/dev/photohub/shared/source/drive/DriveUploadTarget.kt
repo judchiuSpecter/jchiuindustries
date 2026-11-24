@@ -12,12 +12,11 @@ import okio.Path
  */
 class DriveUploadTarget(
     private val uploader: DriveUploader,
+    override val sourceId: String,
 ) : UploadTarget {
 
-    override val sourceId: String get() = DriveSourceConfig.SOURCE_ID
-
     override suspend fun upload(
-        local: Path,
+        local: String,
         remoteFolder: String,
         mimeType: String,
         onProgress: (Float) -> Unit,

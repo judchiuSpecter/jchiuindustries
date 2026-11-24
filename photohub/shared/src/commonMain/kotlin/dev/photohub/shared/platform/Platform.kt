@@ -78,6 +78,26 @@ expect suspend fun sha256OfFile(ref: String): String?
 expect fun fileSize(ref: String): Long?
 
 /**
+ * Reads [length] bytes of [ref] starting at [offset], or null when unreadable.
+ *
+ * Resumable uploads send a file in chunks, and the chunk has to come from the
+ * same seam as [fileSize] rather than okio: an okio `Path` cannot represent a
+ * `content://` URI, and constructing one silently rewrites `content://` to
+ * `content:/`, which then fails to open. Returns fewer bytes than requested at
+ * end of file.
+ */
+expect suspend fun readChunk(ref: String, offset: Long, length: Int): ByteArray?
+
+/**
+ * File name to use for [ref] in the cloud.
+ *
+ * A content URI ends in a numeric id, so the real name has to be asked of the
+ * ContentResolver; otherwise every uploaded photo would be called something
+ * like `1000016271`.
+ */
+expect fun displayName(ref: String): String
+
+/**
  * Opens [url] in the user's real browser for the OAuth consent screen.
  *
  * The flow deliberately avoids an in-app webview: Google blocks those for OAuth,
@@ -88,5 +108,19 @@ expect fun openInBrowser(url: String): Boolean
 /** Schedules periodic background sync (WorkManager on Android, executor on desktop). */
 expect class BackgroundScheduler() {
     fun scheduleDailySync()
+
+    /**
+     * Starts the recurring camera-upload pass, or stops it.
+     *
+     * Called when a cloud becomes (or stops being) the upload target, so the
+     * schedule follows the account rather than running against a cloud that is
+     * not linked. A no-op on platforms without camera upload — desktop has no
+     * camera roll, so there is nothing to upload from.
+     */
+    fun setCameraUploadEnabled(enabled: Boolean)
+
+    /** Requests one upload pass now, for an explicit user action. */
+    fun requestUploadNow()
+
     fun cancelAll()
 }

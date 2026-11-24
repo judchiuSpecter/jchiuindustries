@@ -138,11 +138,11 @@ class DriveUploaderTest {
         )
     }
 
-    private fun tempFile(bytes: ByteArray): Path {
+    private fun tempFile(bytes: ByteArray): String {
         val dir = Files.createTempDirectory("upl").toFile()
         val f = File(dir, "x.jpg")
         f.writeBytes(bytes)
-        return f.absolutePath.toPath()
+        return f.absolutePath
     }
 
     @Test
@@ -234,21 +234,21 @@ class DriveUploaderTest {
 
 class UploadManagerTest {
 
-    private fun tempPhoto(dir: File, name: String, content: String): Path {
+    private fun tempPhoto(dir: File, name: String, content: String): String {
         val f = File(dir, name)
         f.writeText(content)
-        return f.absolutePath.toPath()
+        return f.absolutePath
     }
 
     /** Records what it was asked to upload and can be made to fail. */
     private class FakeTarget(
         override val sourceId: String = "google_drive",
-        val failWith: ((Path) -> Throwable?)? = null,
+        val failWith: ((String) -> Throwable?)? = null,
     ) : UploadTarget {
-        val uploaded = mutableListOf<Pair<Path, String>>()
+        val uploaded = mutableListOf<Pair<String, String>>()
 
         override suspend fun upload(
-            local: Path,
+            local: String,
             remoteFolder: String,
             mimeType: String,
             onProgress: (Float) -> Unit,
@@ -271,6 +271,70 @@ class UploadManagerTest {
             lastSyncedAt = null,
             sortOrder = 1,
         )
+    }
+
+    @Test
+    fun contentUriReferenceReachesTheTargetUnmangled() = runTest {
+        // Regression: the reference used to be converted to an okio Path before
+        // reaching the upload target, and okio normalizes the double slash in
+        // `content://media/...` to `content:/media/...`. Every queued camera
+        // photo on the phone then failed with "no such file". The queue column
+        // is an opaque reference and must be handed over byte-for-byte.
+        val db = newDb().also { seedSource(it) }
+        val manager = UploadManager(db, now = { 1000L })
+        val uri = "content://media/external/images/media/1000016271"
+
+        // Written directly: enqueueRef needs the platform to size the
+        // reference, which a desktop JVM cannot do for a MediaStore URI. What
+        // matters here is that the column round-trips the URI verbatim.
+        db.uploadQueueQueries.enqueue(
+            id = "google_drive:abc",
+            localPath = uri,
+            sha256 = "abc",
+            sizeBytes = 1234L,
+            targetSourceId = "google_drive",
+            targetRemotePath = "PhotoHub/2026/11",
+            queuedAt = 1000L,
+        )
+
+        val stored = db.uploadQueueQueries.selectPending().executeAsList().single().localPath
+        // A collapsed `//` here is exactly what broke every phone upload.
+        assertEquals(uri, stored)
+        assertTrue(stored.startsWith("content://"), "double slash was lost: $stored")
+    }
+
+    @Test
+    fun theQueueReferenceIsHandedToTheTargetUnchanged() = runTest {
+        // The hand-off used to go through okio, which cannot represent a
+        // content URI. Pinned with a real file so it runs on desktop, while the
+        // String-typed seam makes the Android case impossible by construction.
+        val db = newDb().also { seedSource(it) }
+        val manager = UploadManager(db, now = { 1000L })
+        val dir = Files.createTempDirectory("ref").toFile()
+        val photo = tempPhoto(dir, "a.jpg", "bytes")
+
+        manager.enqueue(photo, "google_drive")
+        val target = FakeTarget()
+        manager.runPending(target)
+
+        assertEquals(photo, target.uploaded.single().first)
+    }
+
+    @Test
+    fun remoteFolderForDoesNotRewriteAContentUri() {
+        // Same hazard in the foldering path: a content URI has no mtime to read
+        // and must not be turned into a Path just to ask for one.
+        val db = newDb()
+        val manager = UploadManager(db, now = { 1772668800000L })
+
+        val folder = manager.remoteFolderFor(
+            epochMs = 0L,
+            local = "content://media/external/images/media/42",
+            root = "PhotoHub",
+            zone = TimeZone.UTC,
+        )
+
+        assertEquals("PhotoHub/2026/03", folder)
     }
 
     @Test
@@ -336,7 +400,7 @@ class UploadManagerTest {
     fun remoteFolderUsesTwoDigitMonths() {
         val db = newDb()
         val manager = UploadManager(db, now = { 0L })
-        val path = "/tmp/x.jpg".toPath()
+        val path = "/tmp/x.jpg"
 
         // 2026-03-05T00:00:00Z — a single-digit month must be zero-padded or
         // folders sort wrongly and "3" and "03" both appear over time.

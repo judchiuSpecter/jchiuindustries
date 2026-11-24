@@ -65,7 +65,22 @@ actual class BackgroundScheduler {
         )
     }
 
+    actual fun setCameraUploadEnabled(enabled: Boolean) {
+        if (enabled) {
+            UploadWorker.schedulePeriodic(AndroidPlatform.appContext)
+        } else {
+            UploadWorker.cancel(AndroidPlatform.appContext)
+        }
+    }
+
+    actual fun requestUploadNow() {
+        // Explicit user action, so allow a metered network: the user asked for
+        // this upload and is presumably watching it.
+        UploadWorker.runNow(AndroidPlatform.appContext, requireUnmetered = false)
+    }
+
     actual fun cancelAll() {
         workManager.cancelUniqueWork("photohub-daily-sync")
+        UploadWorker.cancel(AndroidPlatform.appContext)
     }
 }
