@@ -340,7 +340,7 @@ to reason about.
 
 ## 7. Source implementations
 
-### MEGA (`kmp-mega`, M4)
+### MEGA (vendored `kmp-mega`, M4)
 
 `MegaSource` walks the cloud drive plus shared roots and maps image/video nodes
 by extension; Trash and Inbox are skipped. The SDK has no thumbnail endpoint, so
@@ -351,6 +351,13 @@ Android a `content://` camera URI is materialised into the app-private cache
 first because the SDK requires a filesystem path. Login stores only
 `dumpSession()` in the encrypted credential store, and quota comes from
 `getQuota()` when the Sources screen opens.
+
+The `kmp-mega` `1.0.0-beta08` source lives in-tree at
+`shared/src/commonMain/kotlin/dev/carlsen/mega/` (MIT, see
+`THIRD_PARTY_NOTICES.md`) instead of as a binary dependency: its
+`PreloginResp.salt` was declared non-null, but MEGA's `us0` reply has no `s`
+field for version-1 accounts, which made every such account fail to log in.
+The fix is a one-line nullable field plus a null check at the only call site.
 
 ### Local media (`expect`/`actual`)
 

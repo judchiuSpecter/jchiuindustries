@@ -307,9 +307,23 @@ Risks accepted, with mitigation:
 - The README advertises `1.0.0-beta09` but Maven Central only has **beta08**;
   pin beta08.
 
+**Update:** `kmp-mega` is now **vendored**, not pulled as a binary dependency.
+Real-account testing hit an upstream bug: MEGA's `us0` prelogin reply omits the
+`s` salt for version-1 accounts, but the SDK's `PreloginResp` declared `salt`
+non-null, so login failed before credentials were even checked — `field 's' is
+required for type with serial name 'dev.carlsen.mega.dto.PreloginResp' but it
+was missing`. No newer release fixes it (checked main and all tags through
+beta08). The `1.0.0-beta08` source (MIT) was copied into
+`shared/src/commonMain/kotlin/dev/carlsen/mega/` with `salt` made nullable and
+the version-2-only check it guards left unchanged; see
+`THIRD_PARTY_NOTICES.md` for the license text. Its transitive dependencies
+(`kotlinx-io-core`, `ktor-client-logging`, `cryptography-core` +
+`cryptography-provider-jdk`, `bignum`, `stately-concurrency`) were added to
+`shared/build.gradle.kts` directly.
+
 ## Open decisions
 
-- ~~**MEGA implementation**~~ — **decided: use the `kmp-mega` library**
-  (`dev.carlsen.mega:mega`, MIT). See "MEGA decision" below.
+- ~~**MEGA implementation**~~ — **decided: vendor the `kmp-mega` source**
+  (MIT, patched for a prelogin bug). See "MEGA decision" below.
 - **Drive OAuth scope:** `drive.file` (only PhotoHub's own uploads — matches the
   dedicated `PhotoHub/YYYY/MM/` folder plan) vs. full `drive`.

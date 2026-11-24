@@ -62,8 +62,12 @@ kotlin {
             // Filesystem
             implementation(libs.okio)
 
-            // MEGA (M4): per-account SDK graph lives in commonMain.
-            implementation(libs.mega)
+            // MEGA (M4): vendored kmp-mega source, patched for legacy accounts.
+            implementation(libs.kotlinx.io.core)
+            implementation(libs.ktor.client.logging)
+            implementation(libs.cryptography.core)
+            implementation(libs.bignum)
+            implementation(libs.stately.concurrency)
 
             // Image loading
             implementation(libs.coil.compose)
@@ -78,6 +82,7 @@ kotlin {
         androidMain.dependencies {
             implementation(libs.kotlinx.coroutines.android)
             implementation(libs.ktor.client.okhttp)
+            implementation(libs.cryptography.provider.jdk)
             implementation(libs.sqldelight.android.driver)
             implementation(libs.koin.android)
             implementation(libs.androidx.work.runtime)
@@ -91,6 +96,7 @@ kotlin {
             implementation(compose.desktop.currentOs)
             implementation(libs.kotlinx.coroutines.swing)
             implementation(libs.ktor.client.java)
+            implementation(libs.cryptography.provider.jdk)
             implementation(libs.sqldelight.sqlite.driver)
         }
 
