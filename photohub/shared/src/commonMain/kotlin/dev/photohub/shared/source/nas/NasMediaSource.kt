@@ -49,12 +49,17 @@ class NasMediaSource(
             withClient { ssh ->
                 ssh.newSFTPClient().use { sftp ->
                     val items = mutableListOf<RemoteMedia>()
-                    val root = settings.remotePath.trim('/')
+                    val root = settings.remotePath.ifBlank { "/" }
 
                     fun walk(path: String) {
                         val entries = sftp.ls(path)
                         for (entry in entries) {
                             if (entry.name == "." || entry.name == "..") continue
+                            // QTS keeps a hidden recycle bin and a thumbnail
+                            // cache beside every share; neither belongs in the
+                            // timeline, and the recycle bin can hold deleted
+                            // copies of things already shown elsewhere.
+                            if (entry.name in SKIPPED_DIR_NAMES) continue
                             when {
                                 entry.isDirectory -> walk(entry.path)
                                 entry.isRegularFile -> {
@@ -154,5 +159,8 @@ class NasMediaSource(
     private companion object {
         const val THUMB_EDGE = 384
         const val MAX_VIDEO_THUMB_BYTES = 50L * 1024 * 1024
+
+        /** QTS system folders that live inside every share; never real photos. */
+        val SKIPPED_DIR_NAMES = setOf("@Recycle", ".@__thumb", ".streams")
     }
 }

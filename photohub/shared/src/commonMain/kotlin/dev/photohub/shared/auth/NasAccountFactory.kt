@@ -46,7 +46,10 @@ class NasAccountFactory(
             ssh.connect(trimmedHost, port)
             try {
                 ssh.authPassword(username, password)
-                ssh.newSFTPClient().use { it.ls(remotePath.trim('/')) }
+                // Trimming trailing slashes only: QTS's SFTP login lands in the
+                // OS root rather than a share root, so the configured path is
+                // normally absolute (e.g. `/share/Photos`) and must stay that way.
+                ssh.newSFTPClient().use { it.ls(remotePath.ifBlank { "/" }.removeSuffix("/")) }
             } finally {
                 runCatching { ssh.disconnect() }
             }

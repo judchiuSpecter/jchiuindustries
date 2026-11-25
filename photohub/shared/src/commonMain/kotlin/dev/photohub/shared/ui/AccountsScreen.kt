@@ -517,7 +517,7 @@ private fun LinkNasDialog(
     var host by remember { mutableStateOf("") }
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
-    var remotePath by remember { mutableStateOf("Volume2/Photos") }
+    var remotePath by remember { mutableStateOf("/share/Photos") }
 
     AlertDialog(
         onDismissRequest = onDismiss,

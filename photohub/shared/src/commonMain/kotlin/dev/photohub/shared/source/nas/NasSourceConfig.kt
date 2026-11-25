@@ -17,11 +17,12 @@ data class NasSourceConfig(
     val port: Int = 22,
     val username: String = "",
     /**
-     * Folder to index, relative to the SFTP root PhotoHub's user lands in.
+     * Folder to index, as an absolute SFTP path (QTS's admin login lands in
+     * the OS root, not a share root, so a relative path would not resolve).
      * Configurable because every NAS layout differs — this user's photo
-     * archive lives at `Volume2/Photos`.
+     * archive lives at `/share/Photos`.
      */
-    val remotePath: String = "Volume2/Photos",
+    val remotePath: String = "/share/Photos",
 ) {
     companion object {
         /** Instance ids are `<prefix>_<8 hex>` so they cannot collide with other sources. */
