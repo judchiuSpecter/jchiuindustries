@@ -131,12 +131,13 @@ fun DateScrubber(
         )
 
         // Date bubble, only while dragging: a permanent label would sit on top
-        // of the photos it is meant to help find.
+        // of the photos it is meant to help find. Low-opacity and small so it
+        // reads as a transient hint rather than another solid UI chrome piece.
         if (dragging) {
             index.entryAt(fraction)?.let { entry ->
                 Surface(
                     shape = RoundedCornerShape(50),
-                    color = MaterialTheme.colorScheme.primary,
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f),
                     contentColor = MaterialTheme.colorScheme.onPrimary,
                     modifier = Modifier
                         .align(Alignment.TopEnd)
@@ -147,8 +148,10 @@ fun DateScrubber(
                 ) {
                     Text(
                         text = entry.date.formatBubble(),
-                        style = MaterialTheme.typography.labelLarge,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        maxLines = 1,
+                        softWrap = false,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                     )
                 }
             }
