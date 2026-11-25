@@ -16,14 +16,19 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 
 /**
- * Escape dismisses the viewer.
+ * Escape dismisses the viewer; Left/Right arrow keys step to the
+ * previous/next image.
  *
- * The overlay takes focus on appearance so Escape works without a prior click;
- * the box has no pointer-input modifiers, so it does not swallow clicks on the
- * image beneath it.
+ * The overlay takes focus on appearance so these keys work without a prior
+ * click; the box has no pointer-input modifiers, so it does not swallow clicks
+ * on the image beneath it.
  */
 @Composable
-actual fun FullscreenDismissHandler(onDismiss: () -> Unit) {
+actual fun FullscreenDismissHandler(
+    onDismiss: () -> Unit,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+) {
     val requester = remember { FocusRequester() }
     LaunchedEffect(Unit) { requester.requestFocus() }
 
@@ -33,11 +38,12 @@ actual fun FullscreenDismissHandler(onDismiss: () -> Unit) {
             .focusRequester(requester)
             .focusable()
             .onKeyEvent { event ->
-                if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
-                    onDismiss()
-                    true
-                } else {
-                    false
+                if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
+                when (event.key) {
+                    Key.Escape -> { onDismiss(); true }
+                    Key.DirectionLeft -> { onPrevious(); true }
+                    Key.DirectionRight -> { onNext(); true }
+                    else -> false
                 }
             },
     )

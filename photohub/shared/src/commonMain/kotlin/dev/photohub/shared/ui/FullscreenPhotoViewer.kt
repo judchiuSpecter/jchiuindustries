@@ -33,20 +33,24 @@ import java.io.File
  * - Cloud items start from their thumbnail URL and download the original through
  *   the owning source so the full image is shown once available.
  * - Dismissal is platform-native: device Back on Android, Escape on desktop.
- *   There is deliberately no on-screen close button.
+ *   There is deliberately no on-screen close button. On desktop, Left/Right
+ *   arrow keys step through [onPrevious]/[onNext] since there is no swipe
+ *   gesture to rely on.
  */
 @Composable
 fun FullscreenPhotoViewer(
     item: MediaItem,
     onDismiss: () -> Unit,
     images: FullscreenImageController? = null,
+    onPrevious: () -> Unit = {},
+    onNext: () -> Unit = {},
 ) {
     var imageModel by remember(item.id) { mutableStateOf(initialModel(item)) }
     var downloading by remember(item.id) { mutableStateOf(false) }
 
-    // Android Back / desktop Escape. Placed first so the focusable desktop box
-    // sits behind the image and cannot intercept clicks.
-    FullscreenDismissHandler(onDismiss = onDismiss)
+    // Android Back / desktop Escape + arrow keys. Placed first so the
+    // focusable desktop box sits behind the image and cannot intercept clicks.
+    FullscreenDismissHandler(onDismiss = onDismiss, onPrevious = onPrevious, onNext = onNext)
 
     // A cloud item starts with its thumbnail URL. Try to upgrade it to the
     // original through the source that owns this account; failure is non-fatal

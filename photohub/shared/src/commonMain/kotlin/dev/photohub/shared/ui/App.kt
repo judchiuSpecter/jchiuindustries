@@ -142,11 +142,20 @@ fun App(
                 }
 
                 // Fullscreen photo viewer overlay
-                if (selectedItem != null) {
+                selectedItem?.let { current ->
+                    val index = state.items.indexOfFirst { it.id == current.id }
                     FullscreenPhotoViewer(
-                        item = selectedItem!!,
+                        item = current,
                         onDismiss = { selectedItem = null },
                         images = fullscreenImages,
+                        onPrevious = {
+                            if (index > 0) selectedItem = state.items[index - 1]
+                        },
+                        onNext = {
+                            if (index in 0 until state.items.lastIndex) {
+                                selectedItem = state.items[index + 1]
+                            }
+                        },
                     )
                 }
             }
