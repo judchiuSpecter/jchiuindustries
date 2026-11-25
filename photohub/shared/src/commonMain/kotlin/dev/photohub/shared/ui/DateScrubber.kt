@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -31,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import dev.photohub.shared.data.TimelineIndex
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.format.MonthNames
+import kotlinx.datetime.format.Padding
 import kotlinx.datetime.format.char
 
 /**
@@ -107,6 +109,10 @@ fun DateScrubber(
             trackHeightPx = trackHeightPx,
             highlighted = dragging
         )
+        YearLabels(
+            index = index,
+            trackHeightPx = trackHeightPx,
+        )
 
         // Thumb, centred on the position and clamped so it cannot hang off
         // either end of the track. Guard against trackHeightPx < THUMB_HEIGHT
@@ -131,8 +137,14 @@ fun DateScrubber(
         )
 
         // Date bubble, only while dragging: a permanent label would sit on top
-        // of the photos it is meant to help find. Low-opacity and small so it
-        // reads as a transient hint rather than another solid UI chrome piece.
+        // of the photos it is meant to help find. Just day + month — the year
+        // is already shown by the fixed labels on the track, so repeating it
+        // here would only make the bubble wider.
+        //
+        // The rail itself is only RAIL_WIDTH (24dp) wide, so without
+        // wrapContentWidth(unbounded = true) the bubble would be measured
+        // against that width before its offset shifts it clear of the rail,
+        // clipping the text instead of just rendering beside the rail.
         if (dragging) {
             index.entryAt(fraction)?.let { entry ->
                 Surface(
@@ -141,6 +153,7 @@ fun DateScrubber(
                     contentColor = MaterialTheme.colorScheme.onPrimary,
                     modifier = Modifier
                         .align(Alignment.TopEnd)
+                        .wrapContentWidth(unbounded = true)
                         .offset(
                             x = -RAIL_WIDTH - 4.dp,
                             y = thumbOffset,
@@ -196,12 +209,48 @@ private fun BoxScope.MonthTicks(
     }
 }
 
-/** "Nov 2026" — month precision is what a scrubber position can honestly convey. */
+/**
+ * Fixed year labels drawn directly on the track, always visible (unlike the
+ * drag bubble, which only appears while dragging). The bubble itself only
+ * shows day + month, so the year has to live somewhere that is not
+ * accompanying every drag — here, once per year of history, is enough: the
+ * user can always see roughly which year they are near without the bubble
+ * repeating it on every frame.
+ */
+@Composable
+private fun BoxScope.YearLabels(
+    index: TimelineIndex,
+    trackHeightPx: Float,
+) {
+    if (trackHeightPx <= 0f) return
+
+    val markers = remember(index) { index.yearMarkers() }
+    if (markers.isEmpty()) return
+
+    val density = LocalDensity.current
+
+    for (marker in markers) {
+        val y: Dp = with(density) { (marker.startFraction * trackHeightPx).toDp() }
+        Text(
+            text = marker.date.year.toString(),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
+            maxLines = 1,
+            softWrap = false,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .wrapContentWidth(unbounded = true)
+                .offset(x = -RAIL_WIDTH, y = y),
+        )
+    }
+}
+
+/** "2 Nov" — day + a 3-letter month; the year is already on the track's fixed labels. */
 private fun LocalDate.formatBubble(): String {
     val fmt = LocalDate.Format {
-        monthName(MonthNames.ENGLISH_ABBREVIATED)
+        day(Padding.NONE)
         char(' ')
-        year()
+        monthName(MonthNames.ENGLISH_ABBREVIATED)
     }
     return fmt.format(this)
 }

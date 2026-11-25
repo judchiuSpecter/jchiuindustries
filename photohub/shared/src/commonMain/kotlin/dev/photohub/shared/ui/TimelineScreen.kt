@@ -4,10 +4,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
@@ -73,14 +74,11 @@ fun TimelineScreen(
             horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             for (section in sections) {
-                // A single grid cell, not a full-width banner: a day header
-                // that always breaks the row wastes most of a row once a day
-                // has only a few photos. Left unspanned, the grid flows date
-                // chips and thumbnails from several sparse days onto the same
-                // row instead, the way a day with plenty of photos already
-                // fills a row on its own.
-                item(key = "header-${section.date}") {
-                    DayHeaderChip(section)
+                item(
+                    key = "header-${section.date}",
+                    span = { GridItemSpan(maxLineSpan) },
+                ) {
+                    DayHeader(section)
                 }
                 items(section.items, key = { it.id }) { media ->
                     MediaCell(
@@ -109,43 +107,25 @@ fun TimelineScreen(
     }
 }
 
-/**
- * The date label for one day, sized as a single grid cell rather than a
- * full-width banner so sparse days share a row with their neighbors instead
- * of each claiming a whole row for a handful of photos. Small type and a
- * near-transparent background keep it reading as a label among thumbnails,
- * not another block of solid chrome.
- */
 @Composable
-private fun DayHeaderChip(section: TimelineSection) {
-    Surface(
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
-        modifier = Modifier.aspectRatio(1f),
-    ) {
-        Box(Modifier.fillMaxSize().padding(4.dp), contentAlignment = Alignment.Center) {
-            Text(
-                text = section.date.formatHeader(),
-                style = MaterialTheme.typography.labelSmall,
-                textAlign = TextAlign.Center,
-                maxLines = 1,
-                softWrap = false,
-            )
-        }
+private fun DayHeader(section: TimelineSection) {
+    Surface(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = section.date.formatHeader(),
+            style = MaterialTheme.typography.titleSmall,
+            modifier = Modifier.padding(horizontal = 4.dp, vertical = 12.dp),
+        )
     }
 }
 
-/**
- * "Jan 2 '24" — short enough for a single line in a cell-sized chip, but still
- * carries the year: this library spans 2002-2024, where month/day alone would
- * be ambiguous across more than twenty copies of every date.
- */
+/** "2 January 2026" — unambiguous and locale-neutral for a personal app. */
 private fun LocalDate.formatHeader(): String {
     val fmt = LocalDate.Format {
-        monthName(MonthNames.ENGLISH_ABBREVIATED)
-        char(' ')
         day(Padding.NONE)
-        chars(" '")
-        yearTwoDigits(baseYear = 2000)
+        char(' ')
+        monthName(MonthNames.ENGLISH_FULL)
+        char(' ')
+        year()
     }
     return fmt.format(this)
 }

@@ -70,6 +70,17 @@ class TimelineIndex(sections: List<TimelineSection>) {
         }
     }
 
+    /**
+     * Distinct years in timeline order, for the fixed year labels drawn
+     * directly on the track. Unlike [monthMarkers], these stay visible all
+     * the time rather than only while dragging, since the drag bubble itself
+     * only has room for day + month.
+     */
+    fun yearMarkers(): List<Entry> {
+        val seen = HashSet<Int>()
+        return entries.filter { entry -> seen.add(entry.date.year) }
+    }
+
     private fun buildEntries(sections: List<TimelineSection>): List<Entry> {
         val totalItems = sections.sumOf { it.items.size }
         if (totalItems == 0) return emptyList()
