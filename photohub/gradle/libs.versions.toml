@@ -21,6 +21,10 @@ kamel = "1.0.7"
 okio = "3.9.1"
 coil = "3.6.3"
 smbj = "0.14.0"
+# NAS archive (M6): SFTP reaches the QNAP over the internet when SMB/WebDAV
+# ports aren't forwarded, since SSH commonly already is. Both PhotoHub JVM
+# targets (Android, desktop) can share one pure-JVM client.
+sshj = "0.38.0"
 # Vendored kmp-mega source (upstream 1.0.0-beta08, MIT) needs these directly.
 kotlinx-io = "0.9.1"
 bignum = "0.3.10"
@@ -69,6 +73,7 @@ coil-network-ktor = { module = "io.coil-kt.coil3:coil-network-ktor3", version.re
 # Misc
 okio = { module = "com.squareup.okio:okio", version.ref = "okio" }
 smbj = { module = "com.hierynomus:smbj", version.ref = "smbj" }
+sshj = { module = "com.hierynomus:sshj", version.ref = "sshj" }
 
 # MEGA (M4), vendored from kmp-mega 1.0.0-beta08 (MIT) with a prelogin fix.
 # The SDK version is pinned in source because upstream requires a salt field

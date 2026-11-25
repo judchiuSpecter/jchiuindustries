@@ -69,6 +69,11 @@ kotlin {
             implementation(libs.bignum)
             implementation(libs.stately.concurrency)
 
+            // NAS archive (M6): SFTP over SSH. Both PhotoHub targets (Android,
+            // desktop) are JVM, so this pure-Java library resolves from
+            // commonMain without a platform-specific wrapper.
+            implementation(libs.sshj)
+
             // Image loading
             implementation(libs.coil.compose)
             implementation(libs.coil.network.ktor)

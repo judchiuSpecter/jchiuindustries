@@ -63,6 +63,8 @@ fun AccountsScreen(
     var megaTargetId by remember { mutableStateOf<String?>(null) }
     var megaInitialEmail by remember { mutableStateOf("") }
     var showMegaDialogForNew by remember { mutableStateOf(false) }
+    var showNasDialog by remember { mutableStateOf(false) }
+    var nasTargetId by remember { mutableStateOf<String?>(null) }
 
     // Storage is the source of truth, and it can change while this screen is
     // backgrounded (a link completing, tokens being cleared), so re-read on show.
@@ -97,12 +99,14 @@ fun AccountsScreen(
                 setupPath = state.setupPath,
                 quotaLoading = state.quotaLoading,
                 onLink = {
-                    if (source.type == SourceType.MEGA) {
-                        megaTargetId = source.id
-                        megaInitialEmail = source.displayName
-                            .removePrefix("MEGA (").removeSuffix(")")
-                    } else {
-                        scope.launch { controller.linkDrive(source.id) }
+                    when (source.type) {
+                        SourceType.MEGA -> {
+                            megaTargetId = source.id
+                            megaInitialEmail = source.displayName
+                                .removePrefix("MEGA (").removeSuffix(")")
+                        }
+                        SourceType.NAS_ARCHIVE -> nasTargetId = source.id
+                        else -> scope.launch { controller.linkDrive(source.id) }
                     }
                 },
                 onUnlink = { scope.launch { controller.unlinkSource(source.id) } },
@@ -144,6 +148,11 @@ fun AccountsScreen(
                 megaTargetId = null
                 megaInitialEmail = ""
             },
+            onNas = {
+                showAddSource = false
+                showNasDialog = true
+                nasTargetId = null
+            },
         )
     }
 
@@ -162,6 +171,24 @@ fun AccountsScreen(
                 showMegaDialogForNew = false
                 megaTargetId = null
                 scope.launch { controller.linkMega(email, password, mfa, target) }
+            },
+        )
+    }
+
+    if (nasTargetId != null || showNasDialog) {
+        LinkNasDialog(
+            busy = state.sources.any {
+                it.id == nasTargetId && it.state == LinkState.LINKING
+            },
+            onDismiss = {
+                showNasDialog = false
+                nasTargetId = null
+            },
+            onSubmit = { host, username, password, remotePath ->
+                val target = nasTargetId
+                showNasDialog = false
+                nasTargetId = null
+                scope.launch { controller.linkNas(host, username, password, remotePath, sourceId = target) }
             },
         )
     }
@@ -233,11 +260,12 @@ private fun SourceCard(
 
                 account.state == LinkState.NOT_LINKED -> {
                     Text(
-                        if (account.type == SourceType.MEGA) {
-                            "Not connected. Sign in with your MEGA email and password; " +
+                        when (account.type) {
+                            SourceType.MEGA -> "Not connected. Sign in with your MEGA email and password; " +
                                 "only a session key is kept."
-                        } else {
-                            "Not connected. Signing in opens your browser; " +
+                            SourceType.NAS_ARCHIVE -> "Not connected. Connects over SFTP; " +
+                                "PhotoHub only reads from the folder you choose."
+                            else -> "Not connected. Signing in opens your browser; " +
                                 "PhotoHub only gets access to files it creates itself."
                         },
                         style = MaterialTheme.typography.bodyMedium,
@@ -249,8 +277,11 @@ private fun SourceCard(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         CircularProgressIndicator(Modifier.size(20.dp))
                         Text(
-                            if (account.type == SourceType.MEGA) "  Connecting to MEGA…"
-                            else "  Waiting for Google in your browser…",
+                            when (account.type) {
+                                SourceType.MEGA -> "  Connecting to MEGA…"
+                                SourceType.NAS_ARCHIVE -> "  Connecting to the NAS…"
+                                else -> "  Waiting for Google in your browser…"
+                            },
                             style = MaterialTheme.typography.bodyMedium,
                         )
                     }
@@ -258,53 +289,61 @@ private fun SourceCard(
 
                 account.state == LinkState.LINKED -> {
                     Text(
-                        "Connected. New photos are copied to PhotoHub/YYYY/MM.",
+                        if (account.type == SourceType.NAS_ARCHIVE) {
+                            "Connected. Read-only: PhotoHub never deletes or writes to the NAS."
+                        } else {
+                            "Connected. New photos are copied to PhotoHub/YYYY/MM."
+                        },
                         style = MaterialTheme.typography.bodyMedium,
                     )
-                    val quota = account.quota
-                    val storageLabel = if (account.type == SourceType.MEGA) {
-                        "MEGA account storage"
-                    } else {
-                        "Google account storage"
-                    }
-                    when {
-                        quota?.usedBytes != null && quota.limitBytes != null &&
-                            quota.limitBytes!! > 0 -> {
-                            val used = quota.usedBytes!!
-                            val limit = quota.limitBytes!!
-                            Text(
-                                "$storageLabel: ${formatBytes(used)} of ${formatBytes(limit)} used",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            LinearProgressIndicator(
-                                progress = { (used.toFloat() / limit).coerceIn(0f, 1f) },
-                                modifier = Modifier.fillMaxWidth(),
-                            )
+                    if (account.type != SourceType.NAS_ARCHIVE) {
+                        val quota = account.quota
+                        val storageLabel = if (account.type == SourceType.MEGA) {
+                            "MEGA account storage"
+                        } else {
+                            "Google account storage"
                         }
-                        quota?.usedBytes != null -> {
-                            Text(
-                                "$storageLabel: ${formatBytes(quota.usedBytes!!)} used",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        quotaLoading -> {
-                            Text(
-                                "Checking storage…",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                        when {
+                            quota?.usedBytes != null && quota.limitBytes != null &&
+                                quota.limitBytes!! > 0 -> {
+                                val used = quota.usedBytes!!
+                                val limit = quota.limitBytes!!
+                                Text(
+                                    "$storageLabel: ${formatBytes(used)} of ${formatBytes(limit)} used",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                LinearProgressIndicator(
+                                    progress = { (used.toFloat() / limit).coerceIn(0f, 1f) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
+                            quota?.usedBytes != null -> {
+                                Text(
+                                    "$storageLabel: ${formatBytes(quota.usedBytes!!)} used",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            quotaLoading -> {
+                                Text(
+                                    "Checking storage…",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (!account.isUploadTarget) {
-                            OutlinedButton(onClick = onSetTarget) { Text("Use for uploads") }
-                        } else {
-                            // Uploads otherwise wait for the periodic pass, which
-                            // needs Wi-Fi and a charged battery; this is the escape
-                            // hatch for "send it now".
-                            Button(onClick = onUploadNow) { Text("Upload now") }
+                        if (account.canUpload) {
+                            if (!account.isUploadTarget) {
+                                OutlinedButton(onClick = onSetTarget) { Text("Use for uploads") }
+                            } else {
+                                // Uploads otherwise wait for the periodic pass, which
+                                // needs Wi-Fi and a charged battery; this is the escape
+                                // hatch for "send it now".
+                                Button(onClick = onUploadNow) { Text("Upload now") }
+                            }
                         }
                         OutlinedButton(onClick = onUnlink) { Text("Disconnect") }
                     }
@@ -329,6 +368,7 @@ private fun AddSourceDialog(
     onDismiss: () -> Unit,
     onGoogleDrive: () -> Unit,
     onMega: () -> Unit,
+    onNas: () -> Unit,
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -367,9 +407,9 @@ private fun AddSourceDialog(
                         )
                         SourceType.NAS_ARCHIVE -> SourceChoice(
                             "NAS archive",
-                            "Archive older photos to your NAS — planned.",
-                            false,
-                            {},
+                            "Connect over SFTP and read photos already archived there.",
+                            true,
+                            onNas,
                         )
                     }
                     Card(
@@ -457,6 +497,80 @@ private fun LinkMegaDialog(
                     onSubmit(email.trim(), password, mfa.takeIf { it.isNotBlank() })
                 },
                 enabled = !busy && email.isNotBlank() && password.isNotBlank(),
+            ) {
+                Text(if (busy) "Connecting…" else "Connect")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !busy) { Text("Cancel") }
+        },
+    )
+}
+
+/** Connection details for one NAS instance over SFTP. The password lives only in Compose state. */
+@Composable
+private fun LinkNasDialog(
+    busy: Boolean,
+    onDismiss: () -> Unit,
+    onSubmit: (host: String, username: String, password: String, remotePath: String) -> Unit,
+) {
+    var host by remember { mutableStateOf("") }
+    var username by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var remotePath by remember { mutableStateOf("Volume2/Photos") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Connect NAS archive") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Connects over SFTP (port 22). Read-only — PhotoHub never writes to or deletes from the NAS.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = host,
+                    onValueChange = { host = it },
+                    label = { Text("Host or IP") },
+                    singleLine = true,
+                    enabled = !busy,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = username,
+                    onValueChange = { username = it },
+                    label = { Text("Username") },
+                    singleLine = true,
+                    enabled = !busy,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text("Password") },
+                    singleLine = true,
+                    enabled = !busy,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = remotePath,
+                    onValueChange = { remotePath = it },
+                    label = { Text("Folder to index") },
+                    singleLine = true,
+                    enabled = !busy,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onSubmit(host.trim(), username.trim(), password, remotePath.trim())
+                },
+                enabled = !busy && host.isNotBlank() && username.isNotBlank() &&
+                    password.isNotBlank() && remotePath.isNotBlank(),
             ) {
                 Text(if (busy) "Connecting…" else "Connect")
             }

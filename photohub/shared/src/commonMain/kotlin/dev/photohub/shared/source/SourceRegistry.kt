@@ -2,6 +2,7 @@ package dev.photohub.shared.source
 
 import dev.photohub.shared.auth.DriveAccountFactory
 import dev.photohub.shared.auth.MegaAccounts
+import dev.photohub.shared.auth.NasAccounts
 import dev.photohub.shared.model.SourceConfig
 import dev.photohub.shared.model.SourceType
 import dev.photohub.shared.platform.createLocalSource
@@ -15,18 +16,19 @@ import dev.photohub.shared.source.drive.GoogleDriveSource
  * namespace. This keeps that construction in one place so the timeline does not
  * have to know how any particular provider is assembled.
  *
- * Returns null for a type with no implementation yet (OneDrive, Takeout and
- * NAS are still planned), so an unimplemented row in the database cannot crash
- * a sync.
+ * Returns null for a type with no implementation yet (OneDrive and Takeout are
+ * still planned), so an unimplemented row in the database cannot crash a sync.
  */
 class SourceRegistry(
     private val drives: DriveAccountFactory,
     private val megas: MegaAccounts,
+    private val nas: NasAccounts,
 ) {
     suspend fun create(config: SourceConfig): MediaSource? = when (config.type) {
         SourceType.LOCAL -> createLocalSource(config)
         SourceType.GOOGLE_DRIVE -> GoogleDriveSource(config, drives.forSource(config.id).api)
         SourceType.MEGA -> megas.sourceFor(config)
+        SourceType.NAS_ARCHIVE -> nas.sourceFor(config)
         else -> null
     }
 

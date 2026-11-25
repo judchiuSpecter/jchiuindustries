@@ -6,6 +6,7 @@ import dev.photohub.shared.auth.DriveAccountFactory
 import dev.photohub.shared.auth.GoogleOAuthClient
 import dev.photohub.shared.auth.GoogleOAuthConfig
 import dev.photohub.shared.auth.MegaAccounts
+import dev.photohub.shared.auth.NasAccounts
 import dev.photohub.shared.auth.RedirectCapture
 import dev.photohub.shared.auth.RedirectResult
 import dev.photohub.shared.data.AccountsController
@@ -89,11 +90,38 @@ class AccountsControllerTest {
             error("Not used by these state tests")
     }
 
+    /** Stands in for a real NAS/SFTP connection; the tests only care about state. */
+    private class FakeNasAccounts : NasAccounts {
+        val linked = mutableSetOf<String>()
+        var failLink = false
+
+        override fun isLinked(sourceId: String) = sourceId in linked
+
+        override suspend fun link(
+            sourceId: String,
+            host: String,
+            port: Int,
+            username: String,
+            password: String,
+            remotePath: String,
+        ): Result<String> {
+            if (failLink) return Result.failure(IllegalStateException("Could not connect"))
+            linked += sourceId
+            return Result.success(host)
+        }
+
+        override suspend fun unlink(sourceId: String) { linked -= sourceId }
+
+        override suspend fun sourceFor(config: SourceConfig): MediaSource =
+            error("Not used by these state tests")
+    }
+
     private data class Harness(
         val controller: AccountsController,
         val repository: MediaRepository,
         val store: MemStore,
         val megas: FakeMegaAccounts,
+        val nas: FakeNasAccounts = FakeNasAccounts(),
     )
 
     private fun repo(): MediaRepository {
@@ -145,14 +173,16 @@ class AccountsControllerTest {
             launchBrowser = { true },
         )
         val megas = FakeMegaAccounts()
+        val nas = FakeNasAccounts()
         val controller = AccountsController(
             repository = repository,
             drives = factory,
             megas = megas,
+            nas = nas,
             oauthConfig = config,
             generateSourceId = generateSourceId,
         )
-        return Harness(controller, repository, store, megas)
+        return Harness(controller, repository, store, megas, nas)
     }
 
     private fun Harness.driveSources() =

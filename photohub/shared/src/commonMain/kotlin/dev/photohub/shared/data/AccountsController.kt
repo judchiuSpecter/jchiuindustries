@@ -3,6 +3,7 @@ package dev.photohub.shared.data
 import dev.photohub.shared.auth.DriveAccountFactory
 import dev.photohub.shared.auth.DriveLinkCoordinator
 import dev.photohub.shared.auth.MegaAccounts
+import dev.photohub.shared.auth.NasAccounts
 import dev.photohub.shared.auth.GoogleOAuthConfig
 import dev.photohub.shared.auth.OAuthConfigLoader
 import dev.photohub.shared.model.SourceType
@@ -10,6 +11,7 @@ import dev.photohub.shared.model.StorageQuota
 import dev.photohub.shared.platform.BackgroundScheduler
 import dev.photohub.shared.source.drive.DriveSourceConfig
 import dev.photohub.shared.source.mega.MegaSourceConfig
+import dev.photohub.shared.source.nas.NasSourceConfig
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -30,6 +32,7 @@ class AccountsController(
     private val repository: MediaRepository,
     private val drives: DriveAccountFactory,
     private val megas: MegaAccounts,
+    private val nas: NasAccounts,
     private val oauthConfig: GoogleOAuthConfig,
     private val scheduler: BackgroundScheduler = BackgroundScheduler(),
     /** Overridable so tests can use predictable ids. */
@@ -266,6 +269,51 @@ class AccountsController(
     }
 
     /**
+     * Connects a NAS archive over SFTP with a host/username/password and the
+     * folder to index. The password is verified against the NAS before being
+     * stored; nothing in this source is ever an upload target.
+     */
+    suspend fun linkNas(
+        host: String,
+        username: String,
+        password: String,
+        remotePath: String,
+        port: Int = 22,
+        sourceId: String? = null,
+    ) {
+        val id = sourceId ?: ("nas_" + Random.nextBytes(4).joinToString("") { byte ->
+            (byte.toInt() and 0xff).toString(16).padStart(2, '0')
+        })
+        linkingId = id
+        errors.remove(id)
+        errorTypes[id] = SourceType.NAS_ARCHIVE
+        publish()
+
+        val outcome = nas.link(id, host, port, username, password, remotePath)
+        val label = outcome.getOrNull()
+        if (label != null) {
+            linkingId = null
+            val displayName = "NAS ($label)"
+            val config = NasSourceConfig(host = host, port = port, username = username, remotePath = remotePath)
+
+            repository.upsertCloudSource(
+                id = id,
+                type = SourceType.NAS_ARCHIVE,
+                displayName = displayName,
+                configJson = Json.encodeToString(config),
+                enabled = true,
+                // Read-only: never becomes the upload target.
+                makeUploadTarget = false,
+            )
+            message = "$displayName connected."
+        } else {
+            linkingId = null
+            errors[id] = outcome.exceptionOrNull()?.message ?: "Could not connect to the NAS."
+        }
+        publish()
+    }
+
+    /**
      * Disconnects one source: tokens are cleared and the row is disabled, but
      * its indexed rows are kept so the timeline does not suddenly lose entries.
      * Nothing is ever deleted from the cloud itself.
@@ -276,6 +324,8 @@ class AccountsController(
             megas.unlink(id)
         } else if (source.type == SourceType.GOOGLE_DRIVE) {
             drives.forSource(id).tokens.unlink()
+        } else if (source.type == SourceType.NAS_ARCHIVE) {
+            nas.unlink(id)
         } else {
             return
         }
@@ -334,6 +384,7 @@ class AccountsController(
             val linked = when (source.type) {
                 SourceType.GOOGLE_DRIVE -> drives.isLinked(source.id)
                 SourceType.MEGA -> megas.isLinked(source.id)
+                SourceType.NAS_ARCHIVE -> nas.isLinked(source.id)
                 // The device source is always available; unsupported types never
                 // reach this point through the UI but render honestly if present.
                 SourceType.LOCAL -> true
@@ -344,14 +395,13 @@ class AccountsController(
                 type = source.type,
                 displayName = source.displayName,
                 state = when {
-                    source.type != SourceType.LOCAL &&
-                        source.type != SourceType.GOOGLE_DRIVE &&
-                        source.type != SourceType.MEGA -> LinkState.UNSUPPORTED
+                    source.type !in SUPPORTED_TYPES -> LinkState.UNSUPPORTED
                     !oauthConfig.isConfigured && source.type == SourceType.GOOGLE_DRIVE -> LinkState.NOT_CONFIGURED
                     source.id == linkingId -> LinkState.LINKING
                     linked && source.enabled -> LinkState.LINKED
                     else -> LinkState.NOT_LINKED
                 },
+                // The NAS archive is read-only: PhotoHub never writes to it.
                 canUpload = source.type == SourceType.GOOGLE_DRIVE || source.type == SourceType.MEGA,
                 isUploadTarget = source.isUploadTarget,
                 quota = quotas[source.id],
@@ -367,12 +417,16 @@ class AccountsController(
                 rows += SourceAccount(
                     id = id,
                     type = type,
-                    displayName = if (type == SourceType.MEGA) "MEGA" else "Google Drive",
+                    displayName = when (type) {
+                        SourceType.MEGA -> "MEGA"
+                        SourceType.NAS_ARCHIVE -> "NAS archive"
+                        else -> "Google Drive"
+                    },
                     state = when {
                         !oauthConfig.isConfigured && type == SourceType.GOOGLE_DRIVE -> LinkState.NOT_CONFIGURED
                         else -> LinkState.NOT_LINKED
                     },
-                    canUpload = true,
+                    canUpload = type != SourceType.NAS_ARCHIVE,
                     quota = quotas[id],
                     error = error,
                 )
@@ -388,6 +442,10 @@ class AccountsController(
     }
 
     companion object {
+        /** Provider types the sources screen can actually connect. */
+        private val SUPPORTED_TYPES =
+            setOf(SourceType.LOCAL, SourceType.GOOGLE_DRIVE, SourceType.MEGA, SourceType.NAS_ARCHIVE)
+
         /**
          * Instance ids must be unique per account. The legacy single-account id is
          * kept as the prefix so existing installs keep their credential keys and

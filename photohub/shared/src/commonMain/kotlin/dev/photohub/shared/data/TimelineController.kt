@@ -66,10 +66,11 @@ class TimelineController(
                     cloudErrors += "${config.displayName}: ${failure.message ?: "sync failed"}"
                 }
             }
-            // MEGA has no server-side thumbnail URL, so its thumbnails have to
-            // be built from downloaded nodes. Do this per source (and in small
-            // batches) so one slow account cannot stall the rest of the grid.
-            if (config.type == SourceType.MEGA && result.isSuccess) {
+            // MEGA and the NAS archive have no server-side thumbnail URL, so
+            // their thumbnails have to be built from downloaded originals. Do
+            // this per source (and in small batches) so one slow account
+            // cannot stall the rest of the grid.
+            if (config.type in REMOTE_THUMB_TYPES && result.isSuccess) {
                 thumbnails.fetchRemote(source, onProgress = { completed ->
                     if (completed % THUMB_REFRESH_INTERVAL == 0) {
                         _state.value = _state.value.copy(items = page())
@@ -109,5 +110,9 @@ class TimelineController(
 
         // How many thumbnails to finish before republishing the timeline.
         const val THUMB_REFRESH_INTERVAL = 12
+
+        // Sources with no server-side thumbnail URL, so ThumbnailStore has to
+        // download and render one locally instead of just linking to it.
+        val REMOTE_THUMB_TYPES = setOf(SourceType.MEGA, SourceType.NAS_ARCHIVE)
     }
 }

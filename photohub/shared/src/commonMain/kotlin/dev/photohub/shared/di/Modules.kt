@@ -5,6 +5,8 @@ import dev.photohub.shared.auth.GoogleOAuthClient
 import dev.photohub.shared.auth.GoogleOAuthConfig
 import dev.photohub.shared.auth.MegaAccountFactory
 import dev.photohub.shared.auth.MegaAccounts
+import dev.photohub.shared.auth.NasAccountFactory
+import dev.photohub.shared.auth.NasAccounts
 import dev.photohub.shared.auth.OAuthConfigLoader
 import dev.photohub.shared.data.AccountsController
 import dev.photohub.shared.data.CameraUploadScanner
@@ -32,7 +34,7 @@ val sharedModule = module {
     single { MediaIndexer(get()) }
     single { SettingsStore() }
     single { ThumbnailStore(get()) }
-    single { SourceRegistry(get(), get()) }
+    single { SourceRegistry(get(), get(), get()) }
     single { TimelineController(get(), get(), get(), get()) }
     single { BackgroundScheduler() }
 
@@ -64,6 +66,8 @@ val sharedModule = module {
     }
     // MEGA: one cached client graph per connected account, like Drive.
     single<MegaAccounts> { MegaAccountFactory(credentials = get()) }
+    // NAS archive: read-only, password-authenticated SFTP, one connection per call.
+    single<NasAccounts> { NasAccountFactory(credentials = get()) }
 
     single { UploadManager(get(), now = { nowEpochMs() }) }
     single { FullscreenImageController(get(), get()) }
