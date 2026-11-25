@@ -21,6 +21,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.Switch
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -63,6 +64,8 @@ fun AccountsScreen(
     controller: AccountsController,
     themeMode: ThemeMode,
     onThemeModeChange: (ThemeMode) -> Unit,
+    confirmDelete: Boolean = true,
+    onConfirmDeleteChange: (Boolean) -> Unit = {},
     onRetrySource: (String) -> Unit,
     archiver: ArchiveController? = null,
     onArchiveComplete: () -> Unit = {},
@@ -95,11 +98,16 @@ fun AccountsScreen(
         Text("Sources", style = MaterialTheme.typography.headlineSmall)
 
         Text(
-            "Every connected source appears in one timeline. " +
-                "PhotoHub copies new camera photos to the cloud you choose; " +
-                "your local photos are never deleted.",
+            "Every connected source appears in one timeline. One source receives " +
+                "new camera photos; a separate source receives photos you archive. " +
+                "Deletes only happen when you choose them.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        TargetsCard(
+            uploadTarget = state.sources.firstOrNull { it.isUploadTarget }?.displayName,
+            archiveTarget = state.sources.firstOrNull { it.isArchiveTarget }?.displayName,
         )
 
         if (!state.oauthConfigured) {
@@ -124,6 +132,7 @@ fun AccountsScreen(
                 },
                 onUnlink = { scope.launch { controller.unlinkSource(source.id) } },
                 onSetTarget = { controller.setUploadTarget(source.id) },
+                onSetArchiveTarget = { controller.setArchiveTarget(source.id) },
                 onUploadNow = controller::uploadNow,
                 onRetry = { onRetrySource(source.id) },
             )
@@ -160,6 +169,7 @@ fun AccountsScreen(
         }
 
         AppearanceCard(themeMode = themeMode, onChange = onThemeModeChange)
+        ActionsCard(confirmDelete = confirmDelete, onChange = onConfirmDeleteChange)
     }
 
     if (showAddSource) {
@@ -243,6 +253,7 @@ private fun SourceCard(
     onLink: () -> Unit,
     onUnlink: () -> Unit,
     onSetTarget: () -> Unit,
+    onSetArchiveTarget: () -> Unit,
     onUploadNow: () -> Unit,
     onRetry: () -> Unit,
 ) {
@@ -255,6 +266,13 @@ private fun SourceCard(
                         "  · upload target",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+                if (account.isArchiveTarget) {
+                    Text(
+                        "  · archive target",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.tertiary,
                     )
                 }
                 if (account.syncError != null) {
@@ -289,6 +307,9 @@ private fun SourceCard(
                             "You can disable it only by revoking PhotoHub's photo permission.",
                         style = MaterialTheme.typography.bodyMedium,
                     )
+                    if (account.canArchive && !account.isArchiveTarget) {
+                        OutlinedButton(onClick = onSetArchiveTarget) { Text("Use for archives") }
+                    }
                 }
 
                 account.state == LinkState.UNSUPPORTED -> {
@@ -342,7 +363,8 @@ private fun SourceCard(
                 account.state == LinkState.LINKED -> {
                     Text(
                         if (account.type == SourceType.NAS_ARCHIVE) {
-                            "Connected. Read-only: PhotoHub never deletes or writes to the NAS."
+                            "Connected. Queries are read-only; it only receives copies when " +
+                                "you make it the archive target."
                         } else {
                             "Connected. New photos are copied to PhotoHub/YYYY/MM."
                         },
@@ -397,6 +419,9 @@ private fun SourceCard(
                                 Button(onClick = onUploadNow) { Text("Upload now") }
                             }
                         }
+                        if (account.canArchive && !account.isArchiveTarget) {
+                            OutlinedButton(onClick = onSetArchiveTarget) { Text("Use for archives") }
+                        }
                         OutlinedButton(onClick = onUnlink) { Text("Disconnect") }
                     }
                 }
@@ -429,6 +454,24 @@ private fun SourceCard(
                 )
                 OutlinedButton(onClick = onRetry) { Text("Retry") }
             }
+        }
+    }
+}
+
+/** Two single-slot roles, always visible so they cannot be confused. */
+@Composable
+private fun TargetsCard(uploadTarget: String?, archiveTarget: String?) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Current targets", style = MaterialTheme.typography.titleSmall)
+            Text(
+                "Camera uploads → ${uploadTarget ?: "not set"}",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                "Archives → ${archiveTarget ?: "not set"}",
+                style = MaterialTheme.typography.bodyMedium,
+            )
         }
     }
 }
@@ -596,7 +639,8 @@ private fun LinkNasDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    "Connects over SFTP (port 22). Read-only — PhotoHub never writes to or deletes from the NAS.",
+                    "Connects over SFTP (port 22). Queries are read-only; PhotoHub writes " +
+                        "or deletes here only if you make it the archive target.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -673,8 +717,8 @@ private fun ArchiveCard(
             Text("Archive old photos to NAS", style = MaterialTheme.typography.titleMedium)
             Text(
                 "Copies items older than a chosen date from every connected cloud to the " +
-                    "NAS, verifies each copy byte-for-byte, then removes the cloud original. " +
-                    "Requires Wi-Fi on Android.",
+                    "current archive target (which must be a NAS), verifies each copy " +
+                    "byte-for-byte, then removes the cloud original. Requires Wi-Fi on Android.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -823,6 +867,34 @@ private fun AppearanceCard(
                         OutlinedButton(onClick = { onChange(mode) }) { Text(mode.label()) }
                     }
                 }
+            }
+        }
+    }
+}
+
+/** Destructive-action preferences, kept next to the other plain settings. */
+@Composable
+private fun ActionsCard(
+    confirmDelete: Boolean,
+    onChange: (Boolean) -> Unit,
+) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Actions", style = MaterialTheme.typography.titleMedium)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column(Modifier.padding(end = 8.dp)) {
+                    Text("Confirm before deleting", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "Off means Delete acts immediately from the viewer or multiselect.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(checked = confirmDelete, onCheckedChange = onChange)
             }
         }
     }

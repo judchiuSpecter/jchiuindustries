@@ -26,7 +26,9 @@ class SourceRegistry(
 ) {
     suspend fun create(config: SourceConfig): MediaSource? = when (config.type) {
         SourceType.LOCAL -> createLocalSource(config)
-        SourceType.GOOGLE_DRIVE -> GoogleDriveSource(config, drives.forSource(config.id).api)
+        SourceType.GOOGLE_DRIVE -> drives.forSource(config.id).let { account ->
+            GoogleDriveSource(config, account.api, account.uploader)
+        }
         SourceType.MEGA -> megas.sourceFor(config)
         SourceType.NAS_ARCHIVE -> nas.sourceFor(config)
         else -> null

@@ -42,12 +42,19 @@ interface MediaSource {
 
     // ---- Optional write capabilities ----
 
-    /** Whether this source can accept camera-roll uploads. Default false. */
+    /**
+     * Whether this source can accept a local file. Default false.
+     *
+     * This is a capability of the source itself. Camera uploads use a narrower
+     * policy in `AccountsController` (Drive/MEGA only); Archive may use any
+     * writable source, including a NAS or the device's own storage.
+     */
     val canUpload: Boolean get() = false
 
     /**
      * Upload [local] to [remoteFolder] in this source. Only meaningful when
-     * [canUpload] is true. Overridden by Drive/MEGA/OneDrive sources.
+     * [canUpload] is true. [remoteFolder] is a source-relative path; sources
+     * with a configured root (notably NAS) add that root themselves.
      */
     suspend fun upload(
         local: Path,
@@ -57,8 +64,8 @@ interface MediaSource {
         Result.failure(UnsupportedOperationException("Source does not support upload"))
 
     /**
-     * Whether this cloud source permits deletion. Used only by the explicit
-     * NAS archiver, never by timeline sync or camera upload.
+     * Whether this source permits deletion. Used only by explicit user actions
+     * (Delete/Archive), never by timeline sync or camera upload.
      */
     val canDelete: Boolean get() = false
 

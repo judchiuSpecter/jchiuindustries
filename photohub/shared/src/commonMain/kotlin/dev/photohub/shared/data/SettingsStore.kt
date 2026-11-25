@@ -21,11 +21,14 @@ enum class ThemeMode {
 @Serializable
 private data class SettingsFile(
     val themeMode: String = ThemeMode.SYSTEM.name,
+    val confirmDelete: Boolean = true,
 )
 
 /** User preferences, as the UI consumes them. */
 data class Settings(
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
+    /** Delete asks for confirmation unless the user explicitly turns it off. */
+    val confirmDelete: Boolean = true,
 )
 
 /**
@@ -51,6 +54,10 @@ class SettingsStore(
         update { it.copy(themeMode = mode) }
     }
 
+    fun setConfirmDelete(confirm: Boolean) {
+        update { it.copy(confirmDelete = confirm) }
+    }
+
     private fun update(transform: (Settings) -> Settings) {
         val next = transform(_settings.value)
         if (next == _settings.value) return
@@ -70,6 +77,7 @@ class SettingsStore(
             // default rather than throwing on a cold start.
             themeMode = ThemeMode.entries.firstOrNull { it.name == parsed.themeMode }
                 ?: ThemeMode.SYSTEM,
+            confirmDelete = parsed.confirmDelete,
         )
     }
 
@@ -80,7 +88,14 @@ class SettingsStore(
             // file that reads back as corrupt on next launch.
             val temp = path.parent?.resolve("${path.name}.tmp") ?: return
             fileSystem.write(temp) {
-                writeUtf8(json.encodeToString(SettingsFile(themeMode = settings.themeMode.name)))
+                writeUtf8(
+                    json.encodeToString(
+                        SettingsFile(
+                            themeMode = settings.themeMode.name,
+                            confirmDelete = settings.confirmDelete,
+                        ),
+                    ),
+                )
             }
             fileSystem.atomicMove(temp, path)
         }

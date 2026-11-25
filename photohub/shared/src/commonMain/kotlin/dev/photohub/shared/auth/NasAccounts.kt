@@ -8,8 +8,8 @@ import okio.Path
  * The NAS counterpart of [MegaAccounts]: a per-instance connection graph behind
  * a seam the registry and sources screen can both use.
  *
- * Unlike Drive/MEGA there is no upload target or account-wide quota — the NAS
- * archive is read-only, so this interface is deliberately smaller.
+ * Unlike Drive/MEGA there is no camera upload target or account-wide quota.
+ * The source only writes when the user explicitly picks it as the archive target.
  */
 interface NasAccounts {
 

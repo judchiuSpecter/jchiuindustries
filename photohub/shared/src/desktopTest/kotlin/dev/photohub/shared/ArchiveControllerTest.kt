@@ -151,6 +151,8 @@ class ArchiveControllerTest {
             displayName = "NAS",
             configJson = """{"host":"nas.test","port":22,"username":"u","remotePath":"/share/Photos"}""",
         )
+        // The bulk archiver now follows the one designated archive target.
+        repository.setArchiveTarget("nas_test")
         return ArchiveController(
             repository = repository,
             sources = SourceRegistry(

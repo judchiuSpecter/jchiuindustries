@@ -19,11 +19,12 @@ import java.io.File
 /**
  * NAS archive as a PhotoHub media source, reached over SFTP.
  *
- * Read-only: [MediaSource.canUpload] stays false and there is no delete path,
- * matching the design — PhotoHub never writes to or coordinates with the NAS
- * archiver beyond optionally reading what it has already moved there. There is
- * no cursor; one `ls` walk of [NasSourceConfig.remotePath] is cheap enough
- * (recursive directory listing, not a download) to do fully on every refresh.
+ * Timeline sync stays read-only, but an explicitly chosen NAS archive target
+ * can receive copies and delete its own copies when the user archives or deletes
+ * a photo. Writes go through [NasArchiveWriter], which verifies bytes before a
+ * copy is considered complete. There is no cursor: one `ls` walk of
+ * [NasSourceConfig.remotePath] is cheap enough (recursive directory listing,
+ * not a download) to do fully on every refresh.
  *
  * QTS ships a self-signed host key by default, so verification is intentionally
  * promiscuous here rather than pinned — the user already decided to trust this
@@ -40,7 +41,11 @@ class NasMediaSource(
             kotlinx.serialization.json.Json.decodeFromString<NasSourceConfig>(config.configJson)
         }.getOrElse { NasSourceConfig() }
 
-    override val canUpload: Boolean get() = false
+    private val writer = NasArchiveWriter(config.configJson, credentials)
+
+    /** Writable only for explicit Archive actions, never for camera uploads. */
+    override val canUpload: Boolean get() = true
+    override val canDelete: Boolean get() = true
 
     override suspend fun list(cursor: String?): Result<MediaPage> = withContext(Dispatchers.IO) {
         runCatching {
@@ -111,6 +116,63 @@ class NasMediaSource(
             // here, so this reports completion rather than real-time percent.
             onProgress(1f)
             target
+        }
+    }
+
+    /**
+     * Copies a local file under the configured share root, verifying the bytes
+     * read back from the NAS before returning. [remoteFolder] is relative to
+     * that root so the caller cannot write outside the indexed share.
+     */
+    override suspend fun upload(
+        local: Path,
+        remoteFolder: String,
+        onProgress: (Float) -> Unit,
+    ): Result<RemoteMedia> = withContext(Dispatchers.IO) {
+        runCatching {
+            val remotePath = remotePathInShare(remoteFolder, local.name)
+            writer.copyVerified(local, remotePath).getOrThrow()
+            onProgress(1f)
+            val meta = runCatching { fileSystem.metadata(local) }.getOrNull()
+            val mime = MediaTypes.mimeTypeOf(local.name) ?: "application/octet-stream"
+            RemoteMedia(
+                remoteId = remotePath,
+                displayName = local.name,
+                mimeType = mime,
+                isVideo = MediaTypes.isVideoMime(mime),
+                sizeBytes = meta?.size ?: 0L,
+                dateTakenEpochMs = meta?.lastModifiedAtMillis ?: 0L,
+            )
+        }
+    }
+
+    /** Deletes only a file we listed under the configured share root. */
+    override suspend fun delete(item: RemoteMedia): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val root = settings.remotePath.ifBlank { "/" }.trimEnd('/')
+            val prefix = if (root.isEmpty() || root == "/") "/" else "$root/"
+            require(item.remoteId.startsWith(prefix)) {
+                "Refusing to delete a NAS file outside the configured folder"
+            }
+            withClient { ssh ->
+                ssh.newSFTPClient().use { sftp -> sftp.rm(item.remoteId) }
+            }
+        }
+    }
+
+    private fun remotePathInShare(folder: String, name: String): String {
+        val root = settings.remotePath.ifBlank { "/" }.trimEnd('/')
+        val segments = folder.split('/').map { it.trim() }.filter {
+            it.isNotBlank() && it != "." && it != ".."
+        }
+        require(segments.isNotEmpty()) { "Archive folder must not be empty" }
+        val safeName = name.map { c ->
+            if (c.isLetterOrDigit() || c in ".-_ ") c else '_'
+        }.joinToString("").ifBlank { "photo" }
+        return if (root.isEmpty() || root == "/") {
+            "/" + (segments + safeName).joinToString("/")
+        } else {
+            "$root/${(segments + safeName).joinToString("/")}"
         }
     }
 

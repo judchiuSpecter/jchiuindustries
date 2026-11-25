@@ -20,8 +20,10 @@ import dev.photohub.shared.auth.AndroidRedirectCapture
 import dev.photohub.shared.data.AccountsController
 import dev.photohub.shared.data.ArchiveController
 import dev.photohub.shared.data.FullscreenImageController
+import dev.photohub.shared.data.PhotoActionsController
 import dev.photohub.shared.data.SettingsStore
 import dev.photohub.shared.data.TimelineController
+import dev.photohub.shared.platform.AndroidPlatform
 import dev.photohub.shared.ui.App
 import org.koin.android.ext.android.inject
 
@@ -31,11 +33,13 @@ class MainActivity : ComponentActivity() {
     private val redirectCapture: AndroidRedirectCapture by inject()
     private val settings: SettingsStore by inject()
     private val fullscreenImages: FullscreenImageController by inject()
+    private val photoActions: PhotoActionsController by inject()
     private val archiver: ArchiveController by inject()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        AndroidPlatform.attachActivity(this)
 
         // The activity is `singleTop`-less, so a redirect that arrives while the
         // activity is alive comes through onNewIntent, and one that arrives
@@ -61,9 +65,21 @@ class MainActivity : ComponentActivity() {
                 refreshOnStart = granted,
                 settings = settings,
                 fullscreenImages = fullscreenImages,
+                photoActions = photoActions,
                 archiver = archiver,
             )
         }
+    }
+
+    override fun onDestroy() {
+        AndroidPlatform.detachActivity(this)
+        super.onDestroy()
+    }
+
+    /** Feeds MediaStore delete-consent results back to the suspended delete call. */
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        AndroidPlatform.onDeleteResult(requestCode, resultCode)
     }
 
     override fun onNewIntent(intent: Intent) {

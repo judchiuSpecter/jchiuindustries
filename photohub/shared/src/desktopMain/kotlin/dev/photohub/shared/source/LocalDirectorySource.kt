@@ -34,6 +34,10 @@ class LocalDirectorySource(
             ?.map { it.toPath() }
             ?: listOfNotNull(defaultPicturesDir())
 
+    /** Local files can be written when this source is the designated archive target. */
+    override val canUpload: Boolean get() = true
+    override val canDelete: Boolean get() = true
+
     override suspend fun list(cursor: String?): Result<MediaPage> =
         withContext(Dispatchers.IO) {
             runCatching {
@@ -103,6 +107,60 @@ class LocalDirectorySource(
     ): Result<Path> {
         onProgress(1f)
         return Result.success(item.remoteId.toPath())
+    }
+
+    /** Copies into `PhotoHubArchive` under the first configured root. */
+    override suspend fun upload(
+        local: Path,
+        remoteFolder: String,
+        onProgress: (Float) -> Unit,
+    ): Result<RemoteMedia> = withContext(Dispatchers.IO) {
+        runCatching {
+            val base = roots.firstOrNull() ?: error("No local folder is configured")
+            val segments = remoteFolder.split('/').map { it.trim() }.filter {
+                it.isNotBlank() && it != "." && it != ".."
+            }
+            require(segments.isNotEmpty()) { "Archive folder must not be empty" }
+            val target = base / "PhotoHubArchive" / segments.joinToString("/") / local.name
+            target.parent?.let { fs.createDirectories(it) }
+            ensureInside(base, target)
+            File(local.toString()).copyTo(File(target.toString()), overwrite = true)
+            onProgress(1f)
+            val meta = fs.metadata(target)
+            val mime = MediaTypes.mimeTypeOf(target.name) ?: "application/octet-stream"
+            RemoteMedia(
+                remoteId = target.toString(),
+                displayName = target.name,
+                mimeType = mime,
+                isVideo = MediaTypes.isVideoMime(mime),
+                sizeBytes = meta.size ?: 0L,
+                dateTakenEpochMs = meta.lastModifiedAtMillis ?: 0L,
+            )
+        }
+    }
+
+    /** Only files inside a configured root may be deleted by an explicit action. */
+    override suspend fun delete(item: RemoteMedia): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val target = item.remoteId.toPath()
+            ensureInside(roots.firstOrNull() ?: error("No local folder is configured"), target)
+            require(fs.metadata(target).isRegularFile) { "Not a file: ${item.displayName}" }
+            fs.delete(target)
+        }
+    }
+
+    private fun ensureInside(root: Path, target: Path) {
+        val canonicalRoot = fs.canonicalize(root).toString().trimEnd(File.separatorChar)
+        // An upload target does not exist yet, so canonicalise its parent instead.
+        val canonicalTarget = if (fs.exists(target)) {
+            fs.canonicalize(target).toString()
+        } else {
+            val parent = target.parent ?: error("Target has no parent directory")
+            fs.canonicalize(parent).toString().trimEnd(File.separatorChar) + File.separator + target.name
+        }
+        require(canonicalTarget.startsWith(canonicalRoot + File.separator)) {
+            "Refusing to touch a file outside the indexed folder"
+        }
     }
 
     private companion object {

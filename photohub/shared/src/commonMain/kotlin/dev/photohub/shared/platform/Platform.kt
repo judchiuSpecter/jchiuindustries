@@ -28,6 +28,13 @@ fun migrateSchema(driver: SqlDriver) {
     runCatching {
         driver.execute(null, "ALTER TABLE Source ADD COLUMN lastSyncError TEXT", 0)
     }
+    runCatching {
+        driver.execute(
+            null,
+            "ALTER TABLE Source ADD COLUMN isArchiveTarget INTEGER NOT NULL DEFAULT 0",
+            0,
+        )
+    }
 }
 
 /** The filesystem to use for cache reads/writes (okio). */

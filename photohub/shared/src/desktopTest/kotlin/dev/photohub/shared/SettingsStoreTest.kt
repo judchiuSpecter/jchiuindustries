@@ -40,6 +40,19 @@ class SettingsStoreTest {
     }
 
     @Test
+    fun deleteConfirmationDefaultsOnAndSurvivesARestart() {
+        val path = tempPath()
+
+        // Destructive by default, but the user can opt out and that choice is
+        // a preference like the theme — not something to re-ask on every launch.
+        assertEquals(true, SettingsStore(path).settings.value.confirmDelete)
+
+        SettingsStore(path).setConfirmDelete(false)
+
+        assertEquals(false, SettingsStore(path).settings.value.confirmDelete)
+    }
+
+    @Test
     fun aCorruptFileFallsBackToDefaultsInsteadOfCrashingStartup() {
         val path = tempPath()
         path.parent?.let { fileSystem.createDirectories(it) }

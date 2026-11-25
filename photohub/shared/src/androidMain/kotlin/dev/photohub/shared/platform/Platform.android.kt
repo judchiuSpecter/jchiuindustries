@@ -1,8 +1,12 @@
 package dev.photohub.shared.platform
 
+import android.app.Activity
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.net.Uri
+import android.os.Build
+import android.provider.MediaStore
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.NetworkType
@@ -11,6 +15,7 @@ import androidx.work.WorkManager
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.driver.android.AndroidSqliteDriver
 import dev.photohub.shared.db.PhotoHubDatabase
+import kotlinx.coroutines.CompletableDeferred
 import dev.photohub.shared.model.SourceConfig
 import dev.photohub.shared.source.MediaSource
 import dev.photohub.shared.source.MediaStoreSource
@@ -27,8 +32,60 @@ object AndroidPlatform {
     lateinit var appContext: Context
         private set
 
+    private var activityRef: java.lang.ref.WeakReference<Activity>? = null
+
     fun init(context: Context) {
         appContext = context.applicationContext
+    }
+
+    /** The foreground activity, needed for MediaStore's delete-consent dialog. */
+    fun attachActivity(activity: Activity) {
+        activityRef = java.lang.ref.WeakReference(activity)
+    }
+
+    fun detachActivity(activity: Activity) {
+        if (activityRef?.get() === activity) activityRef = null
+    }
+
+    val currentActivity: Activity? get() = activityRef?.get()
+
+    private var nextDeleteRequestCode = 1000
+    private val deleteRequests = mutableMapOf<Int, CompletableDeferred<Boolean>>()
+
+    /**
+     * Deletes MediaStore items, asking the user through Android's own consent
+     * dialog on API 29+. We wait for the activity result before reporting success
+     * so a cancelled dialog cannot leave the item marked as gone in our index.
+     */
+    suspend fun requestMediaDelete(uris: List<Uri>): Result<Unit> {
+        val activity = currentActivity
+            ?: return Result.failure(IllegalStateException("PhotoHub is not in the foreground"))
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            return runCatching { uris.forEach { activity.contentResolver.delete(it, null, null) } }
+        }
+
+        val sender = MediaStore.createDeleteRequest(activity.contentResolver, uris)
+        val code = nextDeleteRequestCode++
+        val deferred = CompletableDeferred<Boolean>()
+        deleteRequests[code] = deferred
+        try {
+            activity.startIntentSenderForResult(sender.intentSender, code, null, 0, 0, 0)
+        } catch (t: Throwable) {
+            deleteRequests.remove(code)
+            return Result.failure(t)
+        }
+        return if (deferred.await()) {
+            Result.success(Unit)
+        } else {
+            Result.failure(IllegalStateException("Delete was cancelled"))
+        }
+    }
+
+    /** Called by MainActivity.onActivityResult; returns true when we handled it. */
+    fun onDeleteResult(requestCode: Int, resultCode: Int): Boolean {
+        val deferred = deleteRequests.remove(requestCode) ?: return false
+        deferred.complete(resultCode == Activity.RESULT_OK)
+        return true
     }
 }
 

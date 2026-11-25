@@ -54,8 +54,12 @@ class AccountsController(
         val type: SourceType,
         val displayName: String,
         val state: LinkState,
+        /** Whether this source can receive camera uploads (Drive/MEGA only). */
         val canUpload: Boolean = false,
         val isUploadTarget: Boolean = false,
+        /** Whether this source can receive explicit Archive actions. */
+        val canArchive: Boolean = false,
+        val isArchiveTarget: Boolean = false,
         /** Account-wide storage quota, fetched only while this screen is open. */
         val quota: StorageQuota? = null,
         /** A link attempt (connect/reconnect) that failed; cleared by retrying the dialog. */
@@ -345,6 +349,7 @@ class AccountsController(
             enabled = false,
         )
         if (source.isUploadTarget) repository.clearUploadTarget(id)
+        if (source.isArchiveTarget) repository.clearArchiveTarget(id)
         updateScheduler()
 
         message = "${source.displayName} disconnected."
@@ -367,6 +372,15 @@ class AccountsController(
         )
         scheduler.setCameraUploadEnabled(true)
         message = "Camera uploads now go to ${source.displayName}."
+        publish()
+    }
+
+    /** Makes this source the destination of explicit Archive actions. Exactly one may be. */
+    fun setArchiveTarget(id: String) {
+        val source = repository.sourceById(id) ?: return
+        if (source.type !in ARCHIVE_TARGET_TYPES || !source.enabled) return
+        repository.setArchiveTarget(id)
+        message = "Archived photos now go to ${source.displayName}."
         publish()
     }
 
@@ -409,9 +423,10 @@ class AccountsController(
                     linked && source.enabled -> LinkState.LINKED
                     else -> LinkState.NOT_LINKED
                 },
-                // The NAS archive is read-only: PhotoHub never writes to it.
                 canUpload = source.type == SourceType.GOOGLE_DRIVE || source.type == SourceType.MEGA,
                 isUploadTarget = source.isUploadTarget,
+                canArchive = source.enabled && source.type in ARCHIVE_TARGET_TYPES,
+                isArchiveTarget = source.isArchiveTarget,
                 quota = quotas[source.id],
                 error = errors[source.id],
                 syncError = source.lastSyncError,
@@ -454,6 +469,9 @@ class AccountsController(
         /** Provider types the sources screen can actually connect. */
         private val SUPPORTED_TYPES =
             setOf(SourceType.LOCAL, SourceType.GOOGLE_DRIVE, SourceType.MEGA, SourceType.NAS_ARCHIVE)
+
+        /** Sources with a write/delete implementation, so they can be archive targets. */
+        private val ARCHIVE_TARGET_TYPES = SUPPORTED_TYPES
 
         /**
          * Instance ids must be unique per account. The legacy single-account id is

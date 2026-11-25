@@ -24,6 +24,9 @@ class MediaRepository(private val db: PhotoHubDatabase) {
     fun totalCount(): Long =
         db.mediaItemQueries.countTimeline().executeAsOne()
 
+    /** Removes one indexed row after its source copy has actually been deleted. */
+    fun deleteMedia(id: String) = db.mediaItemQueries.delete(id)
+
     /**
      * Ensures the device-local source row exists and returns it. Called on
      * startup so the first index has a source to attach rows to.
@@ -37,6 +40,7 @@ class MediaRepository(private val db: PhotoHubDatabase) {
             .executeAsOneOrNull()
 
         if (existing != null) {
+            ensureArchiveTargetFallback()
             return existing.toSourceConfig()
         }
 
@@ -61,7 +65,20 @@ class MediaRepository(private val db: PhotoHubDatabase) {
             sortOrder = 0L,
             lastSyncError = null,
         )
+        ensureArchiveTargetFallback()
         return created
+    }
+
+    /**
+     * Existing installs had a NAS archiver but no explicit archive-target flag.
+     * Adopt the first enabled NAS once so both the old bulk archiver and the new
+     * per-photo Archive action have a target without forcing the user to choose.
+     */
+    private fun ensureArchiveTargetFallback() {
+        if (archiveTarget() != null) return
+        allSources().firstOrNull {
+            it.enabled && it.type == SourceType.NAS_ARCHIVE
+        }?.let { setArchiveTarget(it.id) }
     }
 
     /** Every configured source, for the sources screen. */
@@ -78,6 +95,23 @@ class MediaRepository(private val db: PhotoHubDatabase) {
     /** The source camera uploads go to, or null when none is configured. */
     fun uploadTarget(): SourceConfig? =
         db.sourceQueries.selectUploadTarget().executeAsOneOrNull()?.toSourceConfig()
+
+    /** The single source that receives explicit Archive actions. */
+    fun archiveTarget(): SourceConfig? =
+        db.sourceQueries.selectArchiveTarget().executeAsOneOrNull()?.toSourceConfig()
+
+    /**
+     * Moves the archive slot to [id]. The clear-then-set pair is what enforces
+     * "exactly one", just as it does for the camera upload target.
+     */
+    fun setArchiveTarget(id: String) {
+        if (sourceById(id) == null) return
+        db.sourceQueries.clearAllArchiveTargets()
+        db.sourceQueries.setArchiveTarget(id)
+    }
+
+    /** Clears the archive slot on one source (used when it is disconnected). */
+    fun clearArchiveTarget(id: String) = db.sourceQueries.clearArchiveTarget(id)
 
     /**
      * Registers (or updates) a cloud source.
@@ -124,6 +158,7 @@ class MediaRepository(private val db: PhotoHubDatabase) {
             enabled = enabled,
             isUploadTarget = isTarget,
             configJson = resolvedConfig,
+            isArchiveTarget = existing?.isArchiveTarget == 1L,
         )
     }
 
@@ -148,5 +183,6 @@ class MediaRepository(private val db: PhotoHubDatabase) {
         isUploadTarget = isUploadTarget == 1L,
         configJson = configJson,
         lastSyncError = lastSyncError,
+        isArchiveTarget = isArchiveTarget == 1L,
     )
 }

@@ -5,6 +5,7 @@ import dev.photohub.shared.model.SourceConfig
 import dev.photohub.shared.platform.fileSystem
 import dev.photohub.shared.source.MediaPage
 import dev.photohub.shared.source.MediaSource
+import dev.photohub.shared.source.MediaTypes
 import io.ktor.client.statement.bodyAsChannel
 import io.ktor.http.isSuccess
 import io.ktor.utils.io.ByteReadChannel
@@ -42,6 +43,8 @@ data class DriveSourceConfig(
 class GoogleDriveSource(
     override val config: SourceConfig,
     private val api: DriveApi,
+    /** Present for sources built by the registry; tests can construct without it. */
+    private val uploader: DriveUploader? = null,
 ) : MediaSource {
 
     private val settings: DriveSourceConfig =
@@ -106,9 +109,24 @@ class GoogleDriveSource(
         target
     }
 
-    /** Called only after the NAS archiver has verified an identical copy. */
+    /** Called only after the caller has verified a copy elsewhere. */
     override suspend fun delete(item: RemoteMedia): Result<Unit> = runCatching {
         api.delete(item.remoteId)
+    }
+
+    /**
+     * Writes a local file through the same resumable uploader camera uploads use.
+     * The archive controller names the temp file after the original, so Drive
+     * receives a recognisable filename rather than a UUID.
+     */
+    override suspend fun upload(
+        local: Path,
+        remoteFolder: String,
+        onProgress: (Float) -> Unit,
+    ): Result<RemoteMedia> = runCatching {
+        val uploader = uploader ?: error("Drive uploads are unavailable for ${config.id}")
+        val mime = MediaTypes.mimeTypeOf(local.name) ?: "application/octet-stream"
+        uploader.upload(local.toString(), remoteFolder, mime, onProgress).toRemoteMedia()
     }
 
     /**

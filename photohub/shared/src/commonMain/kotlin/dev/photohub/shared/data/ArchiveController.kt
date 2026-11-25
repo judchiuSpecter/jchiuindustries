@@ -23,13 +23,14 @@ import okio.Path
 import java.util.UUID
 
 /**
- * Occasional cloud → NAS archiver.
+ * Occasional cloud → NAS bulk archiver.
  *
  * This is deliberately not a background job: it deletes from the cloud, so the
- * user starts it explicitly from Sources after choosing a cutoff date. Only
- * linked cloud sources are considered, and a cloud item is deleted only after a
- * byte-identical copy has been verified on the NAS. Every failure keeps the
- * cloud original and moves on to the next item.
+ * user starts it explicitly from Sources after choosing a cutoff date. The
+ * destination is the source marked as the archive target (which must be a NAS
+ * for this bulk flow). Only linked cloud sources are considered, and a cloud
+ * item is deleted only after a byte-identical copy has been verified. Every
+ * failure keeps the cloud original and moves on to the next item.
  */
 class ArchiveController(
     private val repository: MediaRepository,
@@ -65,8 +66,10 @@ class ArchiveController(
 
     /** True when the button can do anything useful right now. */
     fun canArchive(): Boolean {
+        val target = repository.archiveTarget()
         val all = repository.allSources()
-        return all.any { it.enabled && it.type == SourceType.NAS_ARCHIVE && nas.isLinked(it.id) } &&
+        return target != null && target.enabled && target.type == SourceType.NAS_ARCHIVE &&
+            nas.isLinked(target.id) &&
             all.any { it.enabled && it.isCloudSource() && it.isLinked() }
     }
 
@@ -81,9 +84,10 @@ class ArchiveController(
         }
 
         val all = repository.allSources()
-        val nasConfig = all.firstOrNull {
+        val target = repository.archiveTarget()
+        val nasConfig = target?.takeIf {
             it.enabled && it.type == SourceType.NAS_ARCHIVE && nas.isLinked(it.id)
-        } ?: return fail("Connect a NAS source in Settings first.")
+        } ?: return fail("Choose a connected NAS as the archive target in Settings first.")
         val clouds = all.filter { it.enabled && it.isCloudSource() && it.isLinked() }
         if (clouds.isEmpty()) return fail("Connect a cloud source in Settings first.")
 

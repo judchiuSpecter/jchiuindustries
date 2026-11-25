@@ -10,6 +10,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -44,6 +45,10 @@ fun FullscreenPhotoViewer(
     images: FullscreenImageController? = null,
     onPrevious: () -> Unit = {},
     onNext: () -> Unit = {},
+    onDelete: () -> Unit = {},
+    onArchive: () -> Unit = {},
+    canArchive: Boolean = false,
+    busy: Boolean = false,
 ) {
     var imageModel by remember(item.id) { mutableStateOf(initialModel(item)) }
     var downloading by remember(item.id) { mutableStateOf(false) }
@@ -90,6 +95,25 @@ fun FullscreenPhotoViewer(
                     }
                 }
             }
+        }
+
+        // Explicit destructive actions. No close button: dismissal stays native
+        // (Back on Android, Escape on desktop) so a stray tap cannot exit.
+        Row(
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(12.dp),
+        ) {
+            TextButton(
+                onClick = onDelete,
+                enabled = !busy,
+                content = { Text("Delete", color = MaterialTheme.colorScheme.error) },
+            )
+            TextButton(
+                onClick = onArchive,
+                enabled = canArchive && !busy,
+                content = { Text("Archive") },
+            )
         }
 
         if (downloading) {

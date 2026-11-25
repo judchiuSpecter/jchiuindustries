@@ -5,6 +5,7 @@ CREATE TABLE Source (
     displayName   TEXT NOT NULL,
     enabled       INTEGER NOT NULL DEFAULT 1,
     isUploadTarget INTEGER NOT NULL DEFAULT 0, -- exactly one source may be the camera-upload target
+    isArchiveTarget INTEGER NOT NULL DEFAULT 0, -- exactly one source may receive archived media
     -- Opaque, source-specific config (JSON). Credentials are stored separately/encrypted.
     configJson    TEXT NOT NULL DEFAULT '{}',
     lastSyncedAt  INTEGER,                  -- epoch millis of last successful sync, null if never
@@ -27,6 +28,9 @@ SELECT * FROM Source WHERE id = ?;
 
 selectUploadTarget:
 SELECT * FROM Source WHERE isUploadTarget = 1 LIMIT 1;
+
+selectArchiveTarget:
+SELECT * FROM Source WHERE isArchiveTarget = 1 LIMIT 1;
 
 upsert:
 INSERT INTO Source(id, type, displayName, enabled, isUploadTarget, configJson, lastSyncedAt, sortOrder, lastSyncError)
@@ -52,6 +56,17 @@ UPDATE Source SET isUploadTarget = 0;
 -- Clears only one source, used when the current target is disconnected.
 clearUploadTarget:
 UPDATE Source SET isUploadTarget = 0 WHERE id = ?;
+
+-- Same single-slot model for archives. Kept out of `upsert` so re-linking an
+-- account cannot silently move the archive target.
+clearAllArchiveTargets:
+UPDATE Source SET isArchiveTarget = 0;
+
+setArchiveTarget:
+UPDATE Source SET isArchiveTarget = 1 WHERE id = ?;
+
+clearArchiveTarget:
+UPDATE Source SET isArchiveTarget = 0 WHERE id = ?;
 
 setLastSynced:
 UPDATE Source SET lastSyncedAt = ? WHERE id = ?;

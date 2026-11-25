@@ -15,6 +15,7 @@ import dev.photohub.shared.data.CurrentUploadTarget
 import dev.photohub.shared.data.FullscreenImageController
 import dev.photohub.shared.data.MediaIndexer
 import dev.photohub.shared.data.MediaRepository
+import dev.photohub.shared.data.PhotoActionsController
 import dev.photohub.shared.data.SettingsStore
 import dev.photohub.shared.data.ThumbnailStore
 import dev.photohub.shared.data.TimelineController
@@ -72,6 +73,7 @@ val sharedModule = module {
 
     single { UploadManager(get(), now = { nowEpochMs() }) }
     single { FullscreenImageController(get(), get()) }
+    single { PhotoActionsController(get(), get()) }
     single { AccountsController(get(), get(), get(), get(), get()) }
     single { ArchiveController(get(), get(), get(), get(), get()) }
     single { CameraUploadScanner(get(), get(), get()) }

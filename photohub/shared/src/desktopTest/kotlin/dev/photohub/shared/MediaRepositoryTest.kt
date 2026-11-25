@@ -3,6 +3,7 @@ package dev.photohub.shared
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import dev.photohub.shared.data.MediaRepository
 import dev.photohub.shared.db.PhotoHubDatabase
+import dev.photohub.shared.model.SourceType
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -57,6 +58,39 @@ class MediaRepositoryTest {
         assertEquals(2, page.size)
         assertEquals("newer.jpg", page.first().displayName)
         assertNotNull(repo.itemById("local:1"))
+    }
+
+    @Test
+    fun onlyOneArchiveTargetAllowed() {
+        val repo = MediaRepository(newDb())
+        repo.upsertCloudSource("drive_a", SourceType.GOOGLE_DRIVE, "Drive A")
+        repo.upsertCloudSource("drive_b", SourceType.GOOGLE_DRIVE, "Drive B")
+
+        repo.setArchiveTarget("drive_a")
+        repo.setArchiveTarget("drive_b")
+
+        assertEquals("drive_b", repo.archiveTarget()?.id)
+        assertEquals(
+            1,
+            repo.allSources().count { it.isArchiveTarget },
+            "moving the slot must clear the previous target",
+        )
+    }
+
+    @Test
+    fun anExistingNasIsAdoptedAsArchiveTarget() {
+        val repo = MediaRepository(newDb())
+        repo.upsertCloudSource(
+            id = "nas_legacy",
+            type = SourceType.NAS_ARCHIVE,
+            displayName = "NAS",
+        )
+
+        // Existing installs had no archive-target column; startup must not leave
+        // Archive unusable until the user finds the setting.
+        repo.ensureLocalSource()
+
+        assertEquals("nas_legacy", repo.archiveTarget()?.id)
     }
 
     @Test

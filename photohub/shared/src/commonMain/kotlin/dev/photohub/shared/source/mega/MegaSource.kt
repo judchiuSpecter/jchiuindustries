@@ -36,7 +36,7 @@ class MegaSource(
     override val canUpload: Boolean get() = true
     override val canDelete: Boolean get() = true
 
-    /** Called only after the NAS archiver has verified an identical copy. */
+    /** Called only after the caller has verified a copy elsewhere. */
     override suspend fun delete(item: RemoteMedia): Result<Unit> = runCatching {
         val node = account.mega.getNodeByHash(item.remoteId)
             ?: error("MEGA node ${item.remoteId} is no longer available")
