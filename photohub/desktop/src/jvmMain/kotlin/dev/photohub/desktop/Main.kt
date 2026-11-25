@@ -1,5 +1,6 @@
 package dev.photohub.desktop
 
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
@@ -40,6 +41,7 @@ fun main() {
         Window(
             onCloseRequest = ::exitApplication,
             title = "PhotoHub",
+            icon = painterResource("icon.png"),
             state = rememberWindowState(width = 1100.dp, height = 800.dp),
         ) {
             // Desktop has no permission gate, so scan on launch.

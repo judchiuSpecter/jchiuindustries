@@ -74,6 +74,10 @@ kotlin {
             // commonMain without a platform-specific wrapper.
             implementation(libs.sshj)
 
+            // HEIC/HEIF thumbnails (M7): same reasoning as sshj above — pure
+            // Java, no native code, so one decode path covers both targets.
+            implementation(libs.openize.heic)
+
             // Image loading
             implementation(libs.coil.compose)
             implementation(libs.coil.network.ktor)

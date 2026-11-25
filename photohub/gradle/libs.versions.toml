@@ -30,6 +30,11 @@ kotlinx-io = "0.9.1"
 bignum = "0.3.10"
 cryptography = "0.5.0"
 stately = "2.1.0"
+# Pure-Java HEIC/HEIF decoder (M7): both JVM targets (Android, desktop) share
+# one thumbnail path. Published to Aspose's Maven repo, not Maven Central.
+# Its own transitive dependency (metadata-extractor, Apache 2.0) resolves
+# from Maven Central as normal.
+openize-heic = "26.5"
 
 [libraries]
 # Kotlinx
@@ -82,6 +87,10 @@ bignum = { module = "com.ionspin.kotlin:bignum", version.ref = "bignum" }
 cryptography-core = { module = "dev.whyoleg.cryptography:cryptography-core", version.ref = "cryptography" }
 cryptography-provider-jdk = { module = "dev.whyoleg.cryptography:cryptography-provider-jdk", version.ref = "cryptography" }
 stately-concurrency = { module = "co.touchlab:stately-concurrency", version.ref = "stately" }
+
+# HEIC/HEIF thumbnails (M7), pure Java, no native deps so both JVM targets
+# share one decode path.
+openize-heic = { module = "com.aspose:openize-heic", version.ref = "openize-heic" }
 
 # AndroidX
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidx-activityCompose" }

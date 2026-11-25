@@ -13,6 +13,8 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // Openize.HEIC (pure-Java HEIC/HEIF decoder) is published here, not to Maven Central.
+        maven("https://releases.aspose.com/java/repo/")
     }
 }
 

@@ -1,4 +1,5 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
+import java.io.File
 
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
@@ -32,6 +33,16 @@ compose.desktop {
             packageVersion = "1.0.0"
             description = "Offline-first photo timeline across local and cloud sources"
             vendor = "PhotoHub"
+
+            macOS {
+                iconFile.set(File(project.projectDir, "icons/icon.icns"))
+            }
+            windows {
+                iconFile.set(File(project.projectDir, "icons/icon.ico"))
+            }
+            linux {
+                iconFile.set(File(project.projectDir, "icons/icon.png"))
+            }
         }
     }
 }
