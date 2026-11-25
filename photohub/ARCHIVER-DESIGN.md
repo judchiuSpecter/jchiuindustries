@@ -1,6 +1,25 @@
-# PhotoHub Archiver — Design Document (draft)
+# PhotoHub Archiver — Design Document
 
-Working name: **PhotoHub Archiver**. Status: design only, no code yet.
+## Implemented behaviour (supersedes the draft below)
+
+The archiver now runs **inside PhotoHub itself** on Android and desktop, as an
+occasional, user-triggered action in Sources → "Archive old photos to NAS". It
+is not a separate bash/Python service and has no schedule.
+
+For every linked Google Drive and MEGA instance, items older than the chosen
+cutoff are downloaded, copied under
+`<NAS remotePath>/PhotoHubArchive/<Cloud>/YYYY/MM/DD/`, and verified by reading
+the upload back from the NAS and comparing SHA-256 hashes. Only after that is
+the cloud original deleted (MEGA permanently, Drive via its delete API). A
+failed copy or delete keeps the cloud original; the next run retries it. On
+Android the run is refused unless the active connection is Wi-Fi/unmetered.
+After a run, refresh the timeline so archived rows move from the cloud source
+to the NAS source.
+
+The draft below described an earlier standalone-service idea and is retained
+for background only.
+
+## Original draft (standalone service; not implemented)
 
 Two deployment targets, same business logic:
 
