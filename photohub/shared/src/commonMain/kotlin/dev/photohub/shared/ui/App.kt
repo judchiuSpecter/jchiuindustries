@@ -135,6 +135,7 @@ fun App(
                                 controller = it,
                                 themeMode = prefs.themeMode,
                                 onThemeModeChange = settings::setThemeMode,
+                                onRetrySource = { id -> scope.launch { controller.retrySource(id) } },
                                 modifier = Modifier.fillMaxSize(),
                             )
                         }

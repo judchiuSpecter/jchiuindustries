@@ -56,4 +56,6 @@ data class SourceConfig(
     val enabled: Boolean,
     val isUploadTarget: Boolean,
     val configJson: String,
+    /** Set when the last sync attempt failed; null once it succeeds again. */
+    val lastSyncError: String? = null,
 )

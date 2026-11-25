@@ -34,6 +34,7 @@ class MediaRepositoryTest {
             configJson = "{}",
             lastSyncedAt = null,
             sortOrder = 0,
+            lastSyncError = null,
         )
         // Two items; the newer dateTaken must come first.
         db.mediaItemQueries.upsert(
@@ -64,13 +65,13 @@ class MediaRepositoryTest {
         db.sourceQueries.upsert(
             id = "drive", type = "GOOGLE_DRIVE", displayName = "Drive",
             enabled = 1, isUploadTarget = 1, configJson = "{}",
-            lastSyncedAt = null, sortOrder = 0,
+            lastSyncedAt = null, sortOrder = 0, lastSyncError = null,
         )
         db.sourceQueries.clearAllUploadTargets()
         db.sourceQueries.upsert(
             id = "mega", type = "MEGA", displayName = "MEGA",
             enabled = 1, isUploadTarget = 1, configJson = "{}",
-            lastSyncedAt = null, sortOrder = 1,
+            lastSyncedAt = null, sortOrder = 1, lastSyncError = null,
         )
         val target = db.sourceQueries.selectUploadTarget().executeAsOneOrNull()
         assertEquals("mega", target?.id)

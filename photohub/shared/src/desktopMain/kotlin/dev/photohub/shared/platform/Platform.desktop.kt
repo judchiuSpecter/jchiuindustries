@@ -50,6 +50,8 @@ actual fun createDatabaseDriver(): SqlDriver {
     // JDBC driver does not auto-create the schema; do it on first run.
     if (isNew) {
         PhotoHubDatabase.Schema.create(driver)
+    } else {
+        migrateSchema(driver)
     }
     return driver
 }

@@ -37,14 +37,7 @@ class MediaRepository(private val db: PhotoHubDatabase) {
             .executeAsOneOrNull()
 
         if (existing != null) {
-            return SourceConfig(
-                id = existing.id,
-                type = SourceType.valueOf(existing.type),
-                displayName = existing.displayName,
-                enabled = existing.enabled == 1L,
-                isUploadTarget = existing.isUploadTarget == 1L,
-                configJson = existing.configJson,
-            )
+            return existing.toSourceConfig()
         }
 
         val created = SourceConfig(
@@ -66,6 +59,7 @@ class MediaRepository(private val db: PhotoHubDatabase) {
             lastSyncedAt = null,
             // Local first, so it sorts above cloud sources in the sources list.
             sortOrder = 0L,
+            lastSyncError = null,
         )
         return created
     }
@@ -118,6 +112,9 @@ class MediaRepository(private val db: PhotoHubDatabase) {
             lastSyncedAt = existing?.lastSyncedAt,
             // Cloud sources sort after the local device.
             sortOrder = existing?.sortOrder ?: 1L,
+            // A (re)link is a fresh start: clear any alert from a previous
+            // failure rather than carrying it over to the new connection.
+            lastSyncError = null,
         )
 
         return SourceConfig(
@@ -136,6 +133,13 @@ class MediaRepository(private val db: PhotoHubDatabase) {
     /** Removes a source; its media rows cascade away via the foreign key. */
     fun deleteSource(id: String) = db.sourceQueries.delete(id)
 
+    /**
+     * Records the outcome of a sync attempt. Null clears a previous alert on
+     * success; a message sets it so the Sources screen can show one and the
+     * background scheduler can skip this source until the user retries by hand.
+     */
+    fun setSyncError(id: String, error: String?) = db.sourceQueries.setSyncError(error, id)
+
     private fun dev.photohub.shared.db.Source.toSourceConfig() = SourceConfig(
         id = id,
         type = SourceType.valueOf(type),
@@ -143,5 +147,6 @@ class MediaRepository(private val db: PhotoHubDatabase) {
         enabled = enabled == 1L,
         isUploadTarget = isUploadTarget == 1L,
         configJson = configJson,
+        lastSyncError = lastSyncError,
     )
 }

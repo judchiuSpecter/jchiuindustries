@@ -55,6 +55,7 @@ fun AccountsScreen(
     controller: AccountsController,
     themeMode: ThemeMode,
     onThemeModeChange: (ThemeMode) -> Unit,
+    onRetrySource: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val state by controller.state.collectAsState()
@@ -112,6 +113,7 @@ fun AccountsScreen(
                 onUnlink = { scope.launch { controller.unlinkSource(source.id) } },
                 onSetTarget = { controller.setUploadTarget(source.id) },
                 onUploadNow = controller::uploadNow,
+                onRetry = { onRetrySource(source.id) },
             )
         }
 
@@ -203,6 +205,7 @@ private fun SourceCard(
     onUnlink: () -> Unit,
     onSetTarget: () -> Unit,
     onUploadNow: () -> Unit,
+    onRetry: () -> Unit,
 ) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -213,6 +216,16 @@ private fun SourceCard(
                         "  · upload target",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+                if (account.syncError != null) {
+                    // A plain glyph rather than a material icon: the icon font
+                    // extension is not pulled in and this is the one place in
+                    // the app that would need it.
+                    Text(
+                        "  \u26A0",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.error,
                     )
                 }
             }
@@ -357,6 +370,25 @@ private fun SourceCard(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
                 )
+            }
+
+            // A sync failure (as opposed to a link failure above) is sticky:
+            // it stays until the user retries by hand, so it needs its own
+            // explanation and action rather than just the title-row glyph.
+            account.syncError?.let { syncError ->
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    syncError,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+                Text(
+                    "PhotoHub stopped trying automatically so it doesn't keep hitting " +
+                        "the same error. Retry once the problem is fixed.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedButton(onClick = onRetry) { Text("Retry") }
             }
         }
     }

@@ -12,6 +12,24 @@ expect val platformName: String
 /** Creates the platform's SQLDelight driver (Android: AndroidSqliteDriver, Desktop: JDBC). */
 expect fun createDatabaseDriver(): SqlDriver
 
+/**
+ * Adds columns introduced after a database already shipped, for an existing
+ * installation whose `Source` table predates them.
+ *
+ * SQLDelight's `Schema.create` only runs for a brand-new database file, so an
+ * additive column (like `lastSyncError`) needs a manual `ALTER TABLE` for
+ * everyone who already has an index on disk. `ALTER TABLE ADD COLUMN` has no
+ * `IF NOT EXISTS` in SQLite, so running it twice (e.g. on every launch) throws
+ * "duplicate column" — that failure is expected and ignored rather than
+ * checked for up front, since inspecting `pragma_table_info` per platform
+ * driver would be more code for the same result.
+ */
+fun migrateSchema(driver: SqlDriver) {
+    runCatching {
+        driver.execute(null, "ALTER TABLE Source ADD COLUMN lastSyncError TEXT", 0)
+    }
+}
+
 /** The filesystem to use for cache reads/writes (okio). */
 expect val fileSystem: FileSystem
 

@@ -34,6 +34,7 @@ class CameraUploadScannerTest {
             configJson = "{}",
             lastSyncedAt = null,
             sortOrder = 0,
+            lastSyncError = null,
         )
     }
 
@@ -47,6 +48,7 @@ class CameraUploadScannerTest {
             configJson = "{}",
             lastSyncedAt = null,
             sortOrder = 1,
+            lastSyncError = null,
         )
     }
 

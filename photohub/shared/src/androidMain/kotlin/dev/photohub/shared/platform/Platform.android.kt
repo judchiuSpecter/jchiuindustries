@@ -37,7 +37,7 @@ actual fun createDatabaseDriver(): SqlDriver =
         schema = PhotoHubDatabase.Schema,
         context = AndroidPlatform.appContext,
         name = "photohub.db",
-    )
+    ).also { migrateSchema(it) }
 
 actual val fileSystem: FileSystem = FileSystem.SYSTEM
 

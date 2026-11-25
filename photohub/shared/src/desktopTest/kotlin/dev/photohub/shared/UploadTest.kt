@@ -270,6 +270,7 @@ class UploadManagerTest {
             configJson = "{}",
             lastSyncedAt = null,
             sortOrder = 1,
+            lastSyncError = null,
         )
     }
 

@@ -58,7 +58,15 @@ class AccountsController(
         val isUploadTarget: Boolean = false,
         /** Account-wide storage quota, fetched only while this screen is open. */
         val quota: StorageQuota? = null,
+        /** A link attempt (connect/reconnect) that failed; cleared by retrying the dialog. */
         val error: String? = null,
+        /**
+         * The last *sync* attempt failed (account blocked, host unreachable…).
+         * Persisted, so it survives a restart, and shown as an alert icon
+         * rather than inline text since it can happen to an otherwise-linked
+         * source at any time. Cleared by [retrySource].
+         */
+        val syncError: String? = null,
     )
 
     data class State(
@@ -406,6 +414,7 @@ class AccountsController(
                 isUploadTarget = source.isUploadTarget,
                 quota = quotas[source.id],
                 error = errors[source.id],
+                syncError = source.lastSyncError,
             )
         }.toMutableList()
 
