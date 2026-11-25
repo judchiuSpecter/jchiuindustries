@@ -15,6 +15,7 @@ import dev.photohub.shared.data.ThumbnailStore
 import dev.photohub.shared.data.TimelineController
 import dev.photohub.shared.data.UploadTarget
 import dev.photohub.shared.db.PhotoHubDatabase
+import dev.photohub.shared.model.LocalSourceConfig
 import dev.photohub.shared.model.RemoteMedia
 import dev.photohub.shared.model.SourceConfig
 import dev.photohub.shared.model.SourceType
@@ -129,6 +130,16 @@ class TimelineControllerResilienceTest {
     private fun harness(source: MediaSource): Triple<TimelineController, MediaRepository, PhotoHubDatabase> {
         val database = db()
         val repository = MediaRepository(database)
+        // The desktop local source defaults to the real ~/Pictures folder. Pin it
+        // to an empty root so these source-gating tests don't index (or decode
+        // thumbnails for) the developer's actual photo library.
+        val emptyRoot = java.nio.file.Files.createTempDirectory("photohub-empty-pictures").toString()
+        repository.upsertCloudSource(
+            id = LocalSourceConfig.SOURCE_ID,
+            type = SourceType.LOCAL,
+            displayName = "This device",
+            configJson = """{"roots":["$emptyRoot"]}""",
+        )
         val indexer = MediaIndexer(database)
         val thumbnails = ThumbnailStore(database)
         val registry = SourceRegistry(

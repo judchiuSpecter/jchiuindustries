@@ -30,8 +30,14 @@ actual suspend fun renderThumbnail(
     val file = File(sourceRef)
     if (!file.isFile) return@withContext false
 
-    val decoded = decodeSubsampled(file, maxEdge) ?: return@withContext false
-    val scaled = scaleToFit(decoded, maxEdge)
+    val scaled = if (HeicDecoder.isHeic(file)) {
+        val heic = HeicDecoder.decodePreview(file) ?: HeicDecoder.decodeFull(file)
+            ?: return@withContext false
+        scaleToFit(heic.toBufferedImage(), maxEdge)
+    } else {
+        val decoded = decodeSubsampled(file, maxEdge) ?: return@withContext false
+        scaleToFit(decoded, maxEdge)
+    }
 
     val out = File(target.toString())
     out.parentFile?.mkdirs()
@@ -94,6 +100,21 @@ private fun scaleToFit(src: BufferedImage, maxEdge: Int): BufferedImage {
         }
     }
 }
+
+/** Converts Openize's Rgba32 bytes into a Java2D image for scaling/encoding. */
+private fun HeicDecoder.Rgba.toBufferedImage(): BufferedImage =
+    BufferedImage(width, height, BufferedImage.TYPE_INT_RGB).apply {
+        var i = 0
+        for (y in 0 until height) {
+            for (x in 0 until width) {
+                val r = pixels[i++].toInt() and 0xff
+                val g = pixels[i++].toInt() and 0xff
+                val b = pixels[i++].toInt() and 0xff
+                i++ // alpha; JPEG output is opaque
+                setRGB(x, y, (r shl 16) or (g shl 8) or b)
+            }
+        }
+    }
 
 private fun BufferedImage.toRgb(): BufferedImage {
     if (type == BufferedImage.TYPE_INT_RGB) return this

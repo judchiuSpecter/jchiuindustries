@@ -56,7 +56,10 @@ interface MediaSource {
     ): Result<RemoteMedia> =
         Result.failure(UnsupportedOperationException("Source does not support upload"))
 
-    /** Whether this source permits deletion. PhotoHub itself never deletes in v1. */
+    /**
+     * Whether this cloud source permits deletion. Used only by the explicit
+     * NAS archiver, never by timeline sync or camera upload.
+     */
     val canDelete: Boolean get() = false
 
     suspend fun delete(item: RemoteMedia): Result<Unit> =

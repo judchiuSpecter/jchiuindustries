@@ -9,6 +9,7 @@ import dev.photohub.shared.auth.NasAccountFactory
 import dev.photohub.shared.auth.NasAccounts
 import dev.photohub.shared.auth.OAuthConfigLoader
 import dev.photohub.shared.data.AccountsController
+import dev.photohub.shared.data.ArchiveController
 import dev.photohub.shared.data.CameraUploadScanner
 import dev.photohub.shared.data.CurrentUploadTarget
 import dev.photohub.shared.data.FullscreenImageController
@@ -72,6 +73,7 @@ val sharedModule = module {
     single { UploadManager(get(), now = { nowEpochMs() }) }
     single { FullscreenImageController(get(), get()) }
     single { AccountsController(get(), get(), get(), get(), get()) }
+    single { ArchiveController(get(), get(), get(), get(), get()) }
     single { CameraUploadScanner(get(), get(), get()) }
 
     // Resolves the *current* upload target on every use: the user can switch

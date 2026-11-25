@@ -2,6 +2,7 @@ package dev.photohub.shared.auth
 
 import dev.photohub.shared.model.SourceConfig
 import dev.photohub.shared.source.MediaSource
+import okio.Path
 
 /**
  * The NAS counterpart of [MegaAccounts]: a per-instance connection graph behind
@@ -34,4 +35,20 @@ interface NasAccounts {
 
     /** Builds the media source for one configured instance. */
     suspend fun sourceFor(config: SourceConfig): MediaSource
+
+    /**
+     * Size of an already-archived file, used to skip re-downloading an item that
+     * was copied before a previous run failed at the cloud-delete step.
+     * Default keeps test fakes simple: "not present".
+     */
+    suspend fun archivedFileSize(config: SourceConfig, remotePath: String): Result<Long?> =
+        Result.success(null)
+
+    /**
+     * Copies [local] to [remotePath] and verifies the uploaded bytes by reading
+     * them back and comparing SHA-256 hashes. Returns success only when the NAS
+     * holds a byte-identical copy; the cloud delete is allowed after that.
+     */
+    suspend fun copyToArchive(config: SourceConfig, local: Path, remotePath: String): Result<Unit> =
+        Result.failure(UnsupportedOperationException("This NAS source cannot accept archives"))
 }

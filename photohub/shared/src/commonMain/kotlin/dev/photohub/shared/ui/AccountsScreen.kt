@@ -38,9 +38,17 @@ import androidx.compose.ui.unit.dp
 import dev.photohub.shared.data.AccountsController
 import dev.photohub.shared.data.AccountsController.LinkState
 import dev.photohub.shared.data.AccountsController.SourceAccount
+import dev.photohub.shared.data.ArchiveController
 import dev.photohub.shared.data.ThemeMode
 import dev.photohub.shared.model.SourceType
 import kotlinx.coroutines.launch
+import kotlin.time.Clock as TimeClock
+import kotlinx.datetime.DatePeriod
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.atStartOfDayIn
+import kotlinx.datetime.minus
+import kotlinx.datetime.toLocalDateTime
 
 /**
  * Sources screen: every configured source instance, an "add source" picker, and
@@ -56,6 +64,8 @@ fun AccountsScreen(
     themeMode: ThemeMode,
     onThemeModeChange: (ThemeMode) -> Unit,
     onRetrySource: (String) -> Unit,
+    archiver: ArchiveController? = null,
+    onArchiveComplete: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val state by controller.state.collectAsState()
@@ -66,6 +76,8 @@ fun AccountsScreen(
     var showMegaDialogForNew by remember { mutableStateOf(false) }
     var showNasDialog by remember { mutableStateOf(false) }
     var nasTargetId by remember { mutableStateOf<String?>(null) }
+    var showArchiveDialog by remember { mutableStateOf(false) }
+    var archiveCutoff by remember { mutableStateOf("") }
 
     // Storage is the source of truth, and it can change while this screen is
     // backgrounded (a link completing, tokens being cleared), so re-read on show.
@@ -134,6 +146,19 @@ fun AccountsScreen(
             }
         }
 
+        if (archiver != null) {
+            ArchiveCard(
+                controller = archiver,
+                onOpen = {
+                    archiveCutoff = TimeClock.System.now()
+                        .toLocalDateTime(TimeZone.currentSystemDefault()).date
+                        .minus(DatePeriod(days = 90)).toString()
+                    showArchiveDialog = true
+                },
+                onRefreshTimeline = onArchiveComplete,
+            )
+        }
+
         AppearanceCard(themeMode = themeMode, onChange = onThemeModeChange)
     }
 
@@ -191,6 +216,20 @@ fun AccountsScreen(
                 showNasDialog = false
                 nasTargetId = null
                 scope.launch { controller.linkNas(host, username, password, remotePath, sourceId = target) }
+            },
+        )
+    }
+
+    if (showArchiveDialog && archiver != null) {
+        ArchiveDialog(
+            initialCutoff = archiveCutoff,
+            onDismiss = { showArchiveDialog = false },
+            onSubmit = { cutoffEpochMs ->
+                showArchiveDialog = false
+                scope.launch {
+                    archiver.run(cutoffEpochMs)
+                    onArchiveComplete()
+                }
             },
         )
     }
@@ -620,6 +659,113 @@ private data class SourceChoice(
     val enabled: Boolean,
     val onClick: () -> Unit,
 )
+
+/** Manual, destructive-by-design cloud → NAS move. Never runs in the background. */
+@Composable
+private fun ArchiveCard(
+    controller: ArchiveController,
+    onOpen: () -> Unit,
+    onRefreshTimeline: () -> Unit,
+) {
+    val state by controller.state.collectAsState()
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Archive old photos to NAS", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Copies items older than a chosen date from every connected cloud to the " +
+                    "NAS, verifies each copy byte-for-byte, then removes the cloud original. " +
+                    "Requires Wi-Fi on Android.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Button(
+                onClick = onOpen,
+                enabled = !state.running && controller.canArchive(),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(if (state.running) "Archiving…" else "Choose cutoff date…")
+            }
+            if (state.running) {
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+            }
+            if (!state.running && (state.processed > 0 || state.failed > 0 || state.skipped > 0)) {
+                Text(
+                    "${state.processed} checked · ${state.archived} archived · " +
+                        "${state.failed} failed · ${state.skipped} skipped",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                TextButton(onClick = onRefreshTimeline) { Text("Refresh timeline") }
+            }
+            state.message?.let { message ->
+                Text(
+                    message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (state.failed > 0) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ArchiveDialog(
+    initialCutoff: String,
+    onDismiss: () -> Unit,
+    onSubmit: (Long) -> Unit,
+) {
+    var cutoff by remember { mutableStateOf(initialCutoff) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    fun submit() {
+        val date = runCatching { LocalDate.parse(cutoff.trim()) }.getOrNull()
+        if (date == null) {
+            error = "Enter a date as YYYY-MM-DD."
+            return
+        }
+        onSubmit(date.atStartOfDayIn(TimeZone.currentSystemDefault()).toEpochMilliseconds())
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Archive to NAS") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Photos taken before this date will be copied to the NAS. The cloud " +
+                        "copy is deleted only after the NAS copy is verified.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                OutlinedTextField(
+                    value = cutoff,
+                    onValueChange = { cutoff = it; error = null },
+                    label = { Text("Cutoff date (YYYY-MM-DD)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    for (days in listOf(90, 180, 365)) {
+                        OutlinedButton(
+                            onClick = {
+                                cutoff = TimeClock.System.now()
+                                    .toLocalDateTime(TimeZone.currentSystemDefault()).date
+                                    .minus(DatePeriod(days = days)).toString()
+                                error = null
+                            },
+                        ) {
+                            Text("${days}d")
+                        }
+                    }
+                }
+                error?.let {
+                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { submit() }) { Text("Start") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
 
 @Composable
 private fun SetupNeededCard(setupPath: String) {

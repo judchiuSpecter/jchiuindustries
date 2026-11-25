@@ -67,6 +67,8 @@ actual val cacheDir: Path by lazy {
 actual fun createLocalSource(config: SourceConfig): MediaSource? =
     LocalDirectorySource(config)
 
+actual fun isUnmeteredNetwork(): Boolean = true
+
 actual class BackgroundScheduler {
     private var executor: ScheduledExecutorService? = null
 

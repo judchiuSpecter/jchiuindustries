@@ -4,6 +4,7 @@ import dev.photohub.shared.auth.TokenProvider
 import dev.photohub.shared.auth.urlEncode
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
+import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
@@ -200,6 +201,13 @@ class DriveApi(
         http.get("$baseUrl/files/$fileId?alt=media&supportsAllDrives=true") {
             header("Authorization", "Bearer ${tokens.accessToken()}")
         }
+
+    /** Permanently deletes one app-owned file. Only the archiver calls this. */
+    suspend fun delete(fileId: String) {
+        http.delete("$baseUrl/files/$fileId?supportsAllDrives=true") {
+            header("Authorization", "Bearer ${tokens.accessToken()}")
+        }.requireSuccess("delete file")
+    }
 
     /** Fetches an arbitrary Drive URL (e.g. `thumbnailLink`) with auth attached. */
     suspend fun downloadUrl(url: String): HttpResponse =

@@ -49,6 +49,7 @@ class GoogleDriveSource(
             .getOrElse { DriveSourceConfig() }
 
     override val canUpload: Boolean get() = true
+    override val canDelete: Boolean get() = true
 
     override suspend fun list(cursor: String?): Result<MediaPage> = runCatching {
         // Deliberately unscoped by folder. Drive's `'<id>' in parents` matches
@@ -103,6 +104,11 @@ class GoogleDriveSource(
         }
         onProgress(1f)
         target
+    }
+
+    /** Called only after the NAS archiver has verified an identical copy. */
+    override suspend fun delete(item: RemoteMedia): Result<Unit> = runCatching {
+        api.delete(item.remoteId)
     }
 
     /**

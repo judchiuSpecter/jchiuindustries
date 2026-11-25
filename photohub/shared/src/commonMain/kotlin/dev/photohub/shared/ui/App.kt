@@ -24,6 +24,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import dev.photohub.shared.data.AccountsController
+import dev.photohub.shared.data.ArchiveController
 import dev.photohub.shared.data.FullscreenImageController
 import dev.photohub.shared.data.SettingsStore
 import dev.photohub.shared.data.TimelineController
@@ -51,6 +52,7 @@ fun App(
     refreshOnStart: Boolean = true,
     settings: SettingsStore = SettingsStore(),
     fullscreenImages: FullscreenImageController? = null,
+    archiver: ArchiveController? = null,
 ) {
     val state by controller.state.collectAsState()
     val scope = rememberCoroutineScope()
@@ -136,6 +138,8 @@ fun App(
                                 themeMode = prefs.themeMode,
                                 onThemeModeChange = settings::setThemeMode,
                                 onRetrySource = { id -> scope.launch { controller.retrySource(id) } },
+                                archiver = archiver,
+                                onArchiveComplete = { scope.launch { controller.refresh() } },
                                 modifier = Modifier.fillMaxSize(),
                             )
                         }

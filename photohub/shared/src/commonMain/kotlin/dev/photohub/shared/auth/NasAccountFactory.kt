@@ -2,8 +2,10 @@ package dev.photohub.shared.auth
 
 import dev.photohub.shared.model.SourceConfig
 import dev.photohub.shared.source.MediaSource
+import dev.photohub.shared.source.nas.NasArchiveWriter
 import dev.photohub.shared.source.nas.NasMediaSource
 import dev.photohub.shared.source.nas.NasSourceConfig
+import okio.Path
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import net.schmizz.sshj.SSHClient
@@ -67,6 +69,20 @@ class NasAccountFactory(
         val password = { passwords(config.id).load() }
         return NasMediaSource(config, password)
     }
+
+    override suspend fun archivedFileSize(config: SourceConfig, remotePath: String): Result<Long?> =
+        writer(config).size(remotePath)
+
+    override suspend fun copyToArchive(
+        config: SourceConfig,
+        local: Path,
+        remotePath: String,
+    ): Result<Unit> = writer(config).copyVerified(local, remotePath)
+
+    private fun writer(config: SourceConfig) = NasArchiveWriter(
+        configJson = config.configJson,
+        credentials = { passwords(config.id).load() },
+    )
 
     private fun passwords(sourceId: String) = NasCredentialStore(credentials, sourceId)
 }

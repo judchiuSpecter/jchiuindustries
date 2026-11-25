@@ -139,6 +139,13 @@ expect fun displayName(ref: String): String
  */
 expect fun openInBrowser(url: String): Boolean
 
+/**
+ * True when large transfers should be allowed right now. Android treats any
+ * metered connection as "no" so the NAS archiver only runs on Wi-Fi; desktop has
+ * no mobile data concept and always allows it.
+ */
+expect fun isUnmeteredNetwork(): Boolean
+
 /** Schedules periodic background sync (WorkManager on Android, executor on desktop). */
 expect class BackgroundScheduler() {
     fun scheduleDailySync()

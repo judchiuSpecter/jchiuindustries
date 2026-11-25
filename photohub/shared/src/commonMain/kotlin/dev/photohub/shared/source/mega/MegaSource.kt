@@ -34,6 +34,16 @@ class MegaSource(
     private val uploadTarget = MegaUploadTarget(account)
 
     override val canUpload: Boolean get() = true
+    override val canDelete: Boolean get() = true
+
+    /** Called only after the NAS archiver has verified an identical copy. */
+    override suspend fun delete(item: RemoteMedia): Result<Unit> = runCatching {
+        val node = account.mega.getNodeByHash(item.remoteId)
+            ?: error("MEGA node ${item.remoteId} is no longer available")
+        // Permanent rather than trash: the point of archiving is to free cloud
+        // space, and the verified copy already lives on the NAS.
+        account.mega.delete(node, destroy = true)
+    }
 
     /**
      * Lists every image and video in the account, newest first.
